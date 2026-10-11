@@ -35,3 +35,25 @@ interface RawMessageDao {
     @Query("DELETE FROM raw_messages WHERE created_at < :cutoffDate")
     suspend fun pruneRawMessages(cutoffDate: String): Int
 }
+
+@Dao
+interface DiagnosticLogDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertDiagnosticLog(log: DiagnosticLogEntity)
+
+    @Query("SELECT * FROM diagnostic_logs ORDER BY created_at DESC")
+    fun getAllDiagnosticLogsFlow(): Flow<List<DiagnosticLogEntity>>
+
+    @Query("SELECT * FROM diagnostic_logs ORDER BY created_at DESC")
+    suspend fun getAllDiagnosticLogs(): List<DiagnosticLogEntity>
+
+    @Query("SELECT * FROM diagnostic_logs ORDER BY created_at DESC LIMIT :limit")
+    suspend fun getRecentDiagnosticLogs(limit: Int): List<DiagnosticLogEntity>
+
+    @Query("SELECT COUNT(*) FROM diagnostic_logs")
+    suspend fun getDiagnosticLogCount(): Int
+
+    @Query("DELETE FROM diagnostic_logs")
+    suspend fun clearAllDiagnosticLogs()
+}
+

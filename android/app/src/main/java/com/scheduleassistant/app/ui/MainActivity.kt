@@ -11,7 +11,10 @@ import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.Settings
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import com.scheduleassistant.app.data.diagnostics.DiagnosticsManager
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -101,6 +104,19 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun MainContent(initialTab: AppTab) {
         var currentTab by remember { mutableStateOf(initialTab) }
+        val isListenerConnected by DiagnosticsManager.isListenerConnected.collectAsState()
+
+        // Requirement 5: POST_NOTIFICATIONS flow for targetSdk 34 (Android 13+)
+        val notificationPermissionLauncher = rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.RequestPermission()
+        ) { /* State will update via ContextCompat.checkSelfPermission on next recompose */ }
+
+        LaunchedEffect(Unit) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                notificationPermissionLauncher.launch("android.permission.POST_NOTIFICATIONS")
+            }
+        }
+
         val eventsFlow = remember { db.eventDao().getAllEventsFlow() }
         val rawEntities by eventsFlow.collectAsState(initial = emptyList())
 
@@ -146,6 +162,7 @@ class MainActivity : ComponentActivity() {
         var lastExtracted by remember { mutableStateOf<ExtractionOutput?>(null) }
 
         val pendingCount = schedules.count { it.status == ScheduleStatus.PENDING }
+        val scheduledAlarmsCount = reminders.count { it.status.name == "SCHEDULED" }
 
         Scaffold(
             bottomBar = {
@@ -194,8 +211,8 @@ class MainActivity : ComponentActivity() {
                     NavigationBarItem(
                         selected = currentTab == AppTab.SETTINGS,
                         onClick = { currentTab = AppTab.SETTINGS },
-                        icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
-                        label = { Text("Settings") },
+                        icon = { Icon(androidx.compose.material.icons.Icons.Default.Settings, contentDescription = "Diagnostics") },
+                        label = { Text("Diagnostics") },
                         colors = NavigationBarItemDefaults.colors(selectedIconColor = Primary, selectedTextColor = Primary)
                     )
                 }
@@ -209,6 +226,7 @@ class MainActivity : ComponentActivity() {
                 when (currentTab) {
                     AppTab.HOME -> HomeScreen(
                         schedules = schedules,
+                        isListenerConnected = isListenerConnected,
                         onNavigateToPending = { currentTab = AppTab.PENDING },
                         onNavigateToDebug = { currentTab = AppTab.DEBUG }
                     )
@@ -232,7 +250,14 @@ class MainActivity : ComponentActivity() {
                         lastExtracted = lastExtracted,
                         events = syncEvents
                     )
-                    AppTab.SETTINGS -> SettingsScreen()
+                    AppTab.SETTINGS -> SettingsScreen(
+                        scheduledAlarmsCount = scheduledAlarmsCount,
+                        onRequestNotificationPermission = {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                notificationPermissionLauncher.launch("android.permission.POST_NOTIFICATIONS")
+                            }
+                        }
+                    )
                 }
             }
         }

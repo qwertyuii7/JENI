@@ -43,3 +43,29 @@ data class RawMessageEntity(
     @ColumnInfo(name = "created_at")
     val createdAt: String
 )
+
+@Entity(
+    tableName = "diagnostic_logs",
+    indices = [Index(value = ["created_at"])]
+)
+data class DiagnosticLogEntity(
+    @PrimaryKey
+    val id: String,
+    @ColumnInfo(name = "created_at")
+    val createdAt: String,
+    @ColumnInfo(name = "package_name")
+    val packageName: String,
+    @ColumnInfo(name = "chat_title")
+    val chatTitle: String?,
+    val sender: String?,
+    @ColumnInfo(name = "is_group")
+    val isGroup: Boolean,
+    @ColumnInfo(name = "raw_text")
+    val rawText: String,
+    @ColumnInfo(name = "prefilter_result")
+    val prefilterResult: String,
+    @ColumnInfo(name = "parser_output")
+    val parserOutput: String?, // JSON serialized ExtractionOutput or null
+    val mode: String = "LOG_ONLY" // "LOG_ONLY" or "NORMAL"
+)
+

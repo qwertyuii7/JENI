@@ -5,29 +5,32 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.scheduleassistant.app.data.db.AppDatabase
+import com.scheduleassistant.app.data.db.DiagnosticLogEntity
 import com.scheduleassistant.app.data.db.RawMessageEntity
 import com.scheduleassistant.app.data.db.SyncEventEntity
-import com.scheduleassistant.app.data.model.SyncEvent
+import com.scheduleassistant.app.data.diagnostics.DiagnosticsManager
 import com.scheduleassistant.app.engine.HlcClock
 import com.scheduleassistant.app.engine.IngestionPipeline
 import com.scheduleassistant.app.engine.NotificationDispatcher
 import com.scheduleassistant.app.engine.Prefilter
 import com.scheduleassistant.app.engine.ScheduleParser
 import com.scheduleassistant.app.engine.SpecLoader
+import com.scheduleassistant.app.engine.WhatsAppNotificationHandler
 import com.scheduleassistant.app.ui.MainActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.json.JSONObject
-import java.io.InputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -37,6 +40,8 @@ import java.util.UUID
 class ScheduleForegroundService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        DiagnosticsManager.setForegroundServiceRunning(true)
+
         val channelId = "schedule_foreground_channel"
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
@@ -67,6 +72,11 @@ class ScheduleForegroundService : Service() {
         return START_STICKY
     }
 
+    override fun onDestroy() {
+        DiagnosticsManager.setForegroundServiceRunning(false)
+        super.onDestroy()
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 }
 
@@ -74,6 +84,9 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
 
     private val serviceScope = CoroutineScope(Dispatchers.IO)
     private lateinit var pipeline: IngestionPipeline
+    private lateinit var prefilter: Prefilter
+    private lateinit var parser: ScheduleParser
+    private val whatsAppHandler = WhatsAppNotificationHandler()
 
     override fun onCreate() {
         super.onCreate()
@@ -82,8 +95,8 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
             synonymsStreamProvider = { assets.open("spec/synonyms.json") },
             daypartsStreamProvider = { assets.open("spec/dayparts.json") }
         )
-        val prefilter = Prefilter(specLoader)
-        val parser = ScheduleParser(specLoader, prefilter)
+        prefilter = Prefilter(specLoader)
+        parser = ScheduleParser(specLoader, prefilter)
         val hlc = HlcClock("android-phone")
 
         pipeline = IngestionPipeline(
@@ -102,21 +115,38 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
         )
     }
 
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        DiagnosticsManager.setListenerConnected(true)
+        Log.i("ScheduleListener", "Notification listener connected successfully")
+    }
+
+    override fun onListenerDisconnected() {
+        super.onListenerDisconnected()
+        DiagnosticsManager.setListenerConnected(false)
+        Log.w("ScheduleListener", "Notification listener disconnected - attempting requestRebind")
+
+        // Requirement 4: requestRebind on listener disconnect
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            try {
+                requestRebind(ComponentName(this, ScheduleNotificationListenerService::class.java))
+            } catch (e: Exception) {
+                Log.e("ScheduleListener", "Failed to requestRebind: ${e.message}", e)
+            }
+        }
+    }
+
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         if (sbn == null) return
-        val pkg = sbn.packageName ?: return
 
-        // Intercept WhatsApp and WhatsApp Business
-        if (pkg != "com.whatsapp" && pkg != "com.whatsapp.w4b") {
-            return
-        }
+        // Process through WhatsAppNotificationHandler
+        val extractedMessages = whatsAppHandler.extractMessages(applicationContext, sbn)
+        if (extractedMessages.isEmpty()) return
 
-        val extras = sbn.notification.extras ?: return
-        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: ""
-        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
-            ?: extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString() ?: return
+        // Update last notification received time in diagnostics
+        DiagnosticsManager.recordNotificationReceived(applicationContext, sbn.postTime)
 
-        if (text.isBlank()) return
+        val isLogOnly = DiagnosticsManager.isLogOnlyMode(applicationContext)
 
         serviceScope.launch {
             val nowIso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
@@ -125,50 +155,87 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
 
             val db = AppDatabase.getInstance(applicationContext)
 
-            // 1. Store raw message in prunable raw_messages table
-            val rawMsgId = "raw-${UUID.randomUUID()}"
-            db.rawMessageDao().insertRawMessage(
-                RawMessageEntity(id = rawMsgId, rawText = text, source = "whatsapp", createdAt = nowIso)
-            )
+            for (msg in extractedMessages) {
+                val filterResult = prefilter.prefilter(msg.cleanText)
+                val extraction = if (filterResult.shouldParse) parser.parse(msg.cleanText) else null
 
-            // 2. Process message through pipeline
-            val result = pipeline.processMessage(text)
-
-            // 3. Persist generated sync events into Room database
-            if (result.status == "PENDING" && result.entityId != null) {
-                val nextSeq = db.eventDao().getNextSeq("android-phone")
-                val hlcNow = HlcClock("android-phone").now()
-
-                val payloadJson = JSONObject().apply {
-                    put("type", result.extraction?.type)
-                    put("title", result.extraction?.title)
-                    put("start", result.extraction?.start)
-                    put("start_date", result.extraction?.start_date)
-                    put("time_unspecified", result.extraction?.time_unspecified)
-                    put("ambiguous", result.extraction?.ambiguous)
-                    put("source_quote", result.extraction?.source_quote)
-                    put("confidence", result.extraction?.confidence)
-                    put("raw_text", text)
-                    put("raw_message_id", rawMsgId)
+                val parserOutputJson = extraction?.let { ext ->
+                    JSONObject().apply {
+                        put("type", ext.type)
+                        put("title", ext.title)
+                        put("start", ext.start)
+                        put("start_date", ext.start_date)
+                        put("time_unspecified", ext.time_unspecified)
+                        put("ambiguous", ext.ambiguous)
+                        put("confidence", ext.confidence)
+                        put("source_quote", ext.source_quote)
+                    }.toString()
                 }
 
-                val eventEntity = SyncEventEntity(
+                // Record diagnostic log shape + parser output
+                val diagLog = DiagnosticLogEntity(
                     id = UUID.randomUUID().toString(),
-                    timestamp = nowIso,
-                    deviceId = "android-phone",
-                    seq = nextSeq,
-                    hlc = hlcNow,
-                    type = "event_extracted",
-                    entityId = result.entityId,
-                    payload = payloadJson.toString()
+                    createdAt = nowIso,
+                    packageName = msg.packageName,
+                    chatTitle = msg.chatTitle,
+                    sender = msg.sender,
+                    isGroup = msg.isGroup,
+                    rawText = msg.rawText,
+                    prefilterResult = if (filterResult.shouldParse) "passed" else (filterResult.reason ?: "rejected"),
+                    parserOutput = parserOutputJson,
+                    mode = if (isLogOnly) "LOG_ONLY" else "NORMAL"
                 )
-                db.eventDao().insertEvent(eventEntity)
+                db.diagnosticLogDao().insertDiagnosticLog(diagLog)
 
-                // Surface instant heads-up card to user
-                showNotificationAlert(
-                    "New Schedule Found: ${result.extraction?.title}",
-                    "Tap to review & confirm: \"${result.extraction?.source_quote}\""
+                // Requirement 2: Log-only mode creates NO pending events or alarms
+                if (isLogOnly) {
+                    continue
+                }
+
+                // Normal Mode: persist raw message and ingest through pipeline
+                val rawMsgId = "raw-${UUID.randomUUID()}"
+                db.rawMessageDao().insertRawMessage(
+                    RawMessageEntity(id = rawMsgId, rawText = msg.rawText, source = "whatsapp", createdAt = nowIso)
                 )
+
+                val result = pipeline.processMessage(msg.cleanText)
+
+                if (result.status == "PENDING" && result.entityId != null) {
+                    val nextSeq = db.eventDao().getNextSeq("android-phone")
+                    val hlcNow = HlcClock("android-phone").now()
+
+                    val payloadJson = JSONObject().apply {
+                        put("type", result.extraction?.type)
+                        put("title", result.extraction?.title)
+                        put("start", result.extraction?.start)
+                        put("start_date", result.extraction?.start_date)
+                        put("time_unspecified", result.extraction?.time_unspecified)
+                        put("ambiguous", result.extraction?.ambiguous)
+                        put("source_quote", result.extraction?.source_quote)
+                        put("confidence", result.extraction?.confidence)
+                        put("raw_text", msg.rawText)
+                        put("raw_message_id", rawMsgId)
+                        put("sender", msg.sender)
+                        put("chat_title", msg.chatTitle)
+                    }
+
+                    val eventEntity = SyncEventEntity(
+                        id = UUID.randomUUID().toString(),
+                        timestamp = nowIso,
+                        deviceId = "android-phone",
+                        seq = nextSeq,
+                        hlc = hlcNow,
+                        type = "event_extracted",
+                        entityId = result.entityId,
+                        payload = payloadJson.toString()
+                    )
+                    db.eventDao().insertEvent(eventEntity)
+
+                    showNotificationAlert(
+                        "New Schedule Found: ${result.extraction?.title}",
+                        "Tap to review & confirm: \"${result.extraction?.source_quote}\""
+                    )
+                }
             }
         }
     }

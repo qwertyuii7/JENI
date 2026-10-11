@@ -1,158 +1,108 @@
-# QA_PHONE.md: Physical Device Testing & Verification Protocol
+# QA_PHONE.md: Physical Device Verification Protocol & 48-Hour Soak Checklist
 
 > **CRITICAL RULE**: **No device claims without owner verification.**  
 > Automated test suites verify parser parity and unit contracts, but physical OS-level features (Notification Listener, Doze bypass via `setAlarmClock`, and `BOOT_COMPLETED` alarm recovery) require real-device execution and manual sign-off.
+>
+> **M4 Gate**: Do not proceed to M4 until the owner completes the 48-hour soak test and confirms the checklist below.
 
 ---
 
-## 1. Prerequisites
-- **Target Device**: Android 8.0+ (API level 26 minimum, API 34 target).
-- **Tooling**: Android SDK platform-tools (`adb`).
-- **Permissions Required**:
-  - `NotificationListenerService` (to read incoming WhatsApp notifications)
-  - `SCHEDULE_EXACT_ALARM` / `USE_EXACT_ALARM` (for unthrottled alarms)
-  - Battery Optimization Exemption (`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`)
+## 1. Per-OEM Configuration: Samsung (One UI 5 / One UI 6 / Android 13-14)
 
----
+Samsung's aggressive background battery management ("Device Care") aggressively puts inactive background services and notification listeners into sleep mode. Apply the following settings before initiating the soak test:
 
-## 2. Build & Install APK
+### Step 1: Add to "Never Sleeping Apps"
+1. Open **Settings** -> **Battery** (or **Device Care** -> **Battery**).
+2. Tap **Background usage limits**.
+3. Tap **Never sleeping apps**.
+4. Tap the **+** (Add) icon in the top right corner.
+5. Search for and select **Schedule Assistant** -> tap **Add**.
+   > *Why: Prevents Samsung One UI from moving the app into "Sleeping" or "Deep sleeping" status after 24-72 hours of low foreground use.*
 
-From the project root:
+### Step 2: Set Battery Usage to "Unrestricted"
+1. Long-press the **Schedule Assistant** app icon on the home screen/app drawer -> tap the **(i)** (App info) icon.
+2. Scroll to **Battery**.
+3. Select **Unrestricted** (default is *Optimized*).
+   > *Why: Grants exemption from Android Doze background network and CPU throttling.*
+
+### Step 3: Lock App in Recent Tasks ("Keep Open")
+1. Open **Schedule Assistant**, then swipe up to open the **Recent Apps** (task switcher) screen.
+2. Tap the circular **Schedule Assistant icon** above its preview card.
+3. Select **Keep open** (a small padlock icon will appear on the card).
+   > *Why: Prevents One UI from terminating the foreground service when the user taps "Close all".*
+
+### Step 4: Verify Notification Listener Access
+1. Open **Settings** -> **Apps** -> tap the three dots **(⋮)** in top-right -> **Special access**.
+2. Tap **Notification access** (or **Notification read, reply & control**).
+3. Ensure **Schedule Assistant Notification Reader** toggle is **ON** (Allowed).
+
+### Quick ADB Shortcuts (One-Command Setup):
 ```bash
-cd android
-./gradlew assembleDebug
-adb install -r app/build/outputs/apk/debug/app-debug.apk
-```
-
----
-
-## 3. One-Time Permission Setup via ADB
-
-Grant permissions quickly without navigating complex OEM settings menus:
-
-### A. Grant Notification Listener Access
-```bash
+# 1. Grant Notification Listener Access
 adb shell cmd notification allow_listener com.scheduleassistant.app/com.scheduleassistant.app.service.ScheduleNotificationListenerService
-```
 
-### B. Exempt from Battery Optimization (Prevents OS from killing background listener)
-```bash
+# 2. Add to Battery Optimization Whitelist
 adb shell dumpsys deviceidle whitelist +com.scheduleassistant.app
-```
 
-### C. Grant Exact Alarm Permission (Android 12+)
-```bash
+# 3. Grant Exact Alarm Permission (Android 12+)
 adb shell appops set com.scheduleassistant.app SCHEDULE_EXACT_ALARM allow
+
+# 4. Grant POST_NOTIFICATIONS Permission (Android 13+)
+adb shell pm grant com.scheduleassistant.app android.permission.POST_NOTIFICATIONS
 ```
 
 ---
 
-## 4. Test Scenarios & Verification Steps
+## 2. 48-Hour Soak Testing Protocol
 
-### Test 1: In-App Debug Screen Notification Injection (Zero Risk / Offline)
-1. Launch **Schedule Assistant**.
-2. Tap the **Debug** tab on the bottom navigation bar.
-3. In the input box, type or tap the quick chip:
-   `kal 4 baje DBMS class hai`
-4. Tap **Inject as Fake Notification**.
-5. **Expected Output**:
-   - Extraction card displays:
-     - Type: `new`
-     - Title: `DBMS class`
-     - Start: Tomorrow at 16:00:00+05:30
-     - Ambiguous: `false`, Confidence: `90%`
-   - Check **Pending** tab badge: increments by 1.
-   - Tap **Confirm**: event moves to **Home** tab and exact alarm is queued in **Alerts** tab.
+The 48-hour soak test ensures stability, zero-leak memory usage, unthrottled notification listener uptime, and Doze-safe alarm delivery under real-world usage.
 
----
-
-### Test 2: Real WhatsApp Notification Ingestion
-1. Ensure WhatsApp is installed and logged in on the device.
-2. From another phone or web client, send the test message:
-   `"meeting Friday 11 pe shift ho gayi"`
-3. Keep the target phone screen off or on the home screen.
-4. **Expected Output**:
-   - A system heads-up notification appears:  
-     `"New Schedule Found: meeting"`  
-     `"Tap to review & confirm: 'meeting Friday 11 pe shift ho gayi'"`
-5. Tap the notification:
-   - Schedule Assistant opens immediately to the **Pending** tab with the item ready for one-tap confirmation.
-
----
-
-### Test 3: Doze Mode & Exact Alarm Clock Firing
-1. In the app, confirm a schedule set to trigger in 5 minutes (or edit time in Debug screen).
-2. Lock the device and force it into deep Doze mode via ADB:
+### Preparation (Hour 0)
+1. Install fresh build:
    ```bash
-   # Unplug USB battery sensing
-   adb shell dumpsys battery unplug
-   # Step device into Doze IDLE
-   adb shell dumpsys deviceidle force-idle
-   # Verify device is in deep idle
-   adb shell dumpsys deviceidle get deep
+   cd android
+   ./gradlew assembleDebug
+   adb install -r app/build/outputs/apk/debug/app-debug.apk
    ```
-   *(Expected response: `IDLE`)*
-3. Wait for the trigger time.
-4. **Expected Output**:
-   - The device screen turns on / vibrates with high-priority alarm notification:
-     `⏰ ALARM: <Title>`
-   - `AlarmManager.setAlarmClock()` fired exactly on time despite deep Doze mode.
-5. Reconnect battery sensing:
-   ```bash
-   adb shell dumpsys battery reset
-   ```
+2. Open **Diagnostics** tab (bottom bar):
+   - Confirm **Listener State**: `CONNECTED` (Green)
+   - Confirm **Foreground Service**: `ACTIVE` (Green)
+   - Confirm **Battery Whitelist Status**: `WHITELISTED` (Green)
+   - Confirm **Notification Permission**: `GRANTED` (Green)
+3. Choose mode:
+   - For passive validation without notifications/alarms: Enable **Log-Only Mode** toggle.
+   - For full live assistant mode: Keep **Log-Only Mode** toggle OFF.
+4. Record starting battery percentage and time.
 
 ---
 
-### Test 4: Device Reboot & BOOT_COMPLETED Alarm Recovery
-1. Confirm at least one future schedule in the app.
-2. Verify the alarm is scheduled under the **Alerts** tab.
-3. Reboot the phone via ADB or power menu:
-   ```bash
-   adb reboot
-   ```
-4. Once the device boots up and unlocks, monitor logcat:
-   ```bash
-   adb logcat -s BootReceiver ScheduleAssistant:AlarmWakeLock
-   ```
-5. **Expected Output**:
-   - `BootReceiver` receives `ACTION_BOOT_COMPLETED`.
-   - Queries Room `events` table, projects active confirmed schedules via `ProjectionEngine`, and re-registers all alarms with `AlarmManager`.
-   - Open app -> **Alerts** tab still shows scheduled alarms without duplicates.
+### Soak Checkpoints
+
+| Time Elapsed | Target Inspection | Verification Steps | Pass Criteria |
+| :--- | :--- | :--- | :--- |
+| **Hour 6** | Background Uptime | Lock device for 2 hours, then check Diagnostics screen. | `Listener State` remains `CONNECTED`; zero disconnect events; no OS kill. |
+| **Hour 12** | WhatsApp Group Messages | Receive normal WhatsApp group chatter and 2 schedule messages ("Sender: text" format). | Group sender prefix stripped; clean title & time in Pending queue; summary notifications ignored. |
+| **Hour 24** | Deep Doze Wake Alarm | Schedule an exact alarm for 7:00 AM; leave device unplugged overnight. | Alarm fires on the dot via `AlarmManager.setAlarmClock()`; wakes screen/vibrates in Doze. |
+| **Hour 30** | Device Reboot Recovery | Confirm at least 1 future schedule, then reboot phone (`adb reboot`). | `last boot-recovery` timestamp updates; all alarms restored by `BootReceiver` without duplicates. |
+| **Hour 36** | Memory & Process Stability | Check process memory via ADB: `adb shell dumpsys meminfo com.scheduleassistant.app` | PSS memory steady (< 65MB); no native or SQLite leak; zero GC spikes. |
+| **Hour 48** | Anonymized Log Export | Navigate to Diagnostics tab -> tap **Export Anonymized Log (Share Sheet)**. | Exported JSON generated; phone numbers masked as `[PHONE_MASKED]`; names masked as `[PERSON_N]`; schedule text structure preserved. |
 
 ---
 
-### Test 5: Ambiguous AM/PM Dual Reading
-1. In **Debug** tab, inject:
-   `"kal 8 baje test hai"`
-2. Open **Pending** tab.
-3. **Expected Output**:
-   - Item shows warning badge with `65% Conf`.
-   - Two buttons are provided:
-     - **Confirm Reading A (8:00 AM)**
-     - **Confirm Reading B (8:00 PM)**
-   - Tapping either updates the schedule to the exact 24-hour ISO timestamp and removes ambiguity.
+## 3. 48-Hour Soak Sign-Off Checklist
 
----
+Before proceeding to Milestone 4 (Relay & Synchronization), verify and sign off on all items:
 
-### Test 6: SQLite Append-Only Security Check
-1. Inspect the Room database using ADB shell:
-   ```bash
-   adb shell "run-as com.scheduleassistant.app sqlite3 /data/data/com.scheduleassistant.app/databases/schedule_assistant.db 'UPDATE events SET title=\"hacked\" WHERE seq=1;'"
-   ```
-2. **Expected Output**:
-   - SQLite raises error: `Error: Events table is append-only: updates are strictly prohibited`.
-   - Attempting `DELETE FROM events;` similarly fails with `Events table is append-only: deletes are strictly prohibited`.
+- [ ] **Listener Continuity**: Notification listener did not drop or disconnect over 48 hours.
+- [ ] **requestRebind Recovery**: If listener was temporarily disrupted, `requestRebind` re-established connection automatically without manual reboot.
+- [ ] **Summary Notification Filtering**: Zero group summary / bundled notifications ingested as false schedules.
+- [ ] **Group Sender Prefix Handling**: Messages in `"Sender: kal 4 baje meeting"` correctly parsed `"kal 4 baje meeting"` without contaminating title or failing rules.
+- [ ] **Deduplication**: Repeated WhatsApp message notifications with identical `(chat, text, post time)` ingested exactly once.
+- [ ] **Doze Mode Alarm Clock**: Alarms fired on time when the device was in deep idle Doze mode.
+- [ ] **Reboot Recovery**: All active alarms recovered from Room database after phone restart.
+- [ ] **Battery Impact**: Battery consumption attributable to Schedule Assistant is < 1.5% over 48 hours.
+- [ ] **Anonymized Log Export**: Export via share sheet generated valid JSON with phone numbers and personal names masked.
+- [ ] **Append-Only Room Database**: Events table immutability verified; zero updates or deletes permitted.
 
----
-
-## 5. Verification Sign-Off Checklist
-- [ ] Debug injection parses correctly without crashes.
-- [ ] Real WhatsApp notification captured by `NotificationListenerService`.
-- [ ] One-tap confirm/dismiss writes atomic events into Room.
-- [ ] Alarm fires while device is in deep Doze mode.
-- [ ] Alarms survive phone reboot via `BOOT_COMPLETED`.
-- [ ] Ambiguous AM/PM dual options selectable.
-- [ ] No duplicate alerts on multiple launches or catch-ups.
-
-**Status**: Ready for physical phone verification by owner.
+**Status**: Ready for physical device verification and 48-hour soak run by owner.  
+**M4 Gate**: Do not start M4 until soak results are reported by the owner.

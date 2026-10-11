@@ -7,13 +7,14 @@ import androidx.room.RoomDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [SyncEventEntity::class, RawMessageEntity::class],
-    version = 1,
+    entities = [SyncEventEntity::class, RawMessageEntity::class, DiagnosticLogEntity::class],
+    version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun eventDao(): EventDao
     abstract fun rawMessageDao(): RawMessageDao
+    abstract fun diagnosticLogDao(): DiagnosticLogDao
 
     companion object {
         @Volatile
@@ -25,7 +26,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "schedule_assistant.db"
-                ).addCallback(object : Callback() {
+                ).fallbackToDestructiveMigration().addCallback(object : Callback() {
                     override fun onCreate(db: SupportSQLiteDatabase) {
                         super.onCreate(db)
                         // Install strict append-only triggers on events table

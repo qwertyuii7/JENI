@@ -12,6 +12,7 @@ import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import com.scheduleassistant.app.data.db.AppDatabase
 import com.scheduleassistant.app.data.db.SyncEventEntity
+import com.scheduleassistant.app.data.diagnostics.DiagnosticsManager
 import com.scheduleassistant.app.data.model.ScheduleEntity
 import com.scheduleassistant.app.data.model.ScheduleStatus
 import com.scheduleassistant.app.data.model.SyncEvent
@@ -194,6 +195,7 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action
         if (action == Intent.ACTION_BOOT_COMPLETED || action == Intent.ACTION_MY_PACKAGE_REPLACED || action == "android.intent.action.QUICKBOOT_POWERON") {
+            DiagnosticsManager.recordBootRecovery(context)
             // Restore alarms on reboot from Room database
             CoroutineScope(Dispatchers.IO).launch {
                 val db = AppDatabase.getInstance(context)

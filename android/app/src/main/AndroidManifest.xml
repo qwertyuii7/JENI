@@ -15,7 +15,9 @@
 
     <application
         android:name=".ScheduleApplication"
-        android:allowBackup="true"
+        android:allowBackup="false"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@android:drawable/ic_lock_idle_alarm"
         android:label="Schedule Assistant"
         android:roundIcon="@android:drawable/ic_lock_idle_alarm"
@@ -43,14 +45,14 @@
             </intent-filter>
         </service>
 
-        <!-- Foreground Service Keeping App Alive -->
+        <!-- Foreground Service Keeping App Alive (targetSdk 34 specialUse) -->
         <service
             android:name=".service.ScheduleForegroundService"
             android:foregroundServiceType="specialUse"
             android:exported="false">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Schedule extraction from notification listener" />
+                android:value="Schedule and reminder processing from offline notification listener" />
         </service>
 
         <!-- Receives Alarms from AlarmManager.setAlarmClock -->
@@ -69,6 +71,17 @@
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
             </intent-filter>
         </receiver>
+
+        <!-- FileProvider for Exporting Anonymized Diagnostic Logs -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
     </application>
 
