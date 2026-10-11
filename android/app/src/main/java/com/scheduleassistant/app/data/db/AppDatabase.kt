@@ -7,8 +7,15 @@ import androidx.room.RoomDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [SyncEventEntity::class, RawMessageEntity::class, DiagnosticLogEntity::class, SoakCheckpointEntity::class],
-    version = 3,
+    entities = [
+        SyncEventEntity::class,
+        RawMessageEntity::class,
+        DiagnosticLogEntity::class,
+        SoakCheckpointEntity::class,
+        HeartbeatLogEntity::class,
+        AlarmTestEntity::class
+    ],
+    version = 4,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -16,6 +23,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun rawMessageDao(): RawMessageDao
     abstract fun diagnosticLogDao(): DiagnosticLogDao
     abstract fun soakCheckpointDao(): SoakCheckpointDao
+    abstract fun heartbeatLogDao(): HeartbeatLogDao
+    abstract fun alarmTestDao(): AlarmTestDao
 
     companion object {
         @Volatile
@@ -44,6 +53,23 @@ abstract class AppDatabase : RoomDatabase() {
                             BEFORE DELETE ON events
                             BEGIN
                                 SELECT RAISE(FAIL, 'Events table is append-only: deletes are strictly prohibited');
+                            END;
+                        """.trimIndent())
+
+                        // Install strict append-only triggers on heartbeat_logs table
+                        db.execSQL("""
+                            CREATE TRIGGER IF NOT EXISTS prevent_heartbeat_update
+                            BEFORE UPDATE ON heartbeat_logs
+                            BEGIN
+                                SELECT RAISE(FAIL, 'Heartbeat log table is append-only: updates are strictly prohibited');
+                            END;
+                        """.trimIndent())
+
+                        db.execSQL("""
+                            CREATE TRIGGER IF NOT EXISTS prevent_heartbeat_delete
+                            BEFORE DELETE ON heartbeat_logs
+                            BEGIN
+                                SELECT RAISE(FAIL, 'Heartbeat log table is append-only: deletes are strictly prohibited');
                             END;
                         """.trimIndent())
                     }

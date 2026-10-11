@@ -11,6 +11,7 @@ import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Settings
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -211,7 +212,7 @@ class MainActivity : ComponentActivity() {
                     NavigationBarItem(
                         selected = currentTab == AppTab.SETTINGS,
                         onClick = { currentTab = AppTab.SETTINGS },
-                        icon = { Icon(androidx.compose.material.icons.Icons.Default.Settings, contentDescription = "Diagnostics") },
+                        icon = { Icon(Icons.Default.Settings, contentDescription = "Diagnostics") },
                         label = { Text("Diagnostics") },
                         colors = NavigationBarItemDefaults.colors(selectedIconColor = Primary, selectedTextColor = Primary)
                     )

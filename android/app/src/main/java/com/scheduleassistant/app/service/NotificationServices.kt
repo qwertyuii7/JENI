@@ -39,6 +39,13 @@ import java.util.UUID
 
 class ScheduleForegroundService : Service() {
 
+    override fun onCreate() {
+        super.onCreate()
+        CoroutineScope(Dispatchers.IO).launch {
+            DiagnosticsManager.recordHeartbeat(applicationContext, "SERVICE_CREATE", "ScheduleForegroundService onCreate")
+        }
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         DiagnosticsManager.setForegroundServiceRunning(true)
 
@@ -74,7 +81,17 @@ class ScheduleForegroundService : Service() {
 
     override fun onDestroy() {
         DiagnosticsManager.setForegroundServiceRunning(false)
+        CoroutineScope(Dispatchers.IO).launch {
+            DiagnosticsManager.recordHeartbeat(applicationContext, "SERVICE_DESTROY", "ScheduleForegroundService onDestroy")
+        }
         super.onDestroy()
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        CoroutineScope(Dispatchers.IO).launch {
+            DiagnosticsManager.recordHeartbeat(applicationContext, "SERVICE_TASK_REMOVED", "ScheduleForegroundService onTaskRemoved")
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -119,12 +136,18 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
         super.onListenerConnected()
         DiagnosticsManager.setListenerConnected(true)
         Log.i("ScheduleListener", "Notification listener connected successfully")
+        serviceScope.launch {
+            DiagnosticsManager.recordHeartbeat(applicationContext, "LISTENER_CONNECTED", "Notification listener connected successfully")
+        }
     }
 
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
         DiagnosticsManager.setListenerConnected(false)
         Log.w("ScheduleListener", "Notification listener disconnected - attempting requestRebind")
+        serviceScope.launch {
+            DiagnosticsManager.recordHeartbeat(applicationContext, "LISTENER_DISCONNECTED", "Notification listener disconnected")
+        }
 
         // Requirement 4: requestRebind on listener disconnect
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -141,6 +164,18 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
 
         // Process through WhatsAppNotificationHandler
         val extractedMessages = whatsAppHandler.extractMessages(applicationContext, sbn)
+
+        // Log heartbeat onNotificationPosted (count only)
+        serviceScope.launch {
+            val db = AppDatabase.getInstance(applicationContext)
+            val currentCount = db.diagnosticLogDao().getDiagnosticLogCount()
+            DiagnosticsManager.recordHeartbeat(
+                applicationContext,
+                "NOTIFICATION_POSTED",
+                "count: $currentCount, pkg: ${sbn.packageName}"
+            )
+        }
+
         if (extractedMessages.isEmpty()) return
 
         // Update last notification received time in diagnostics

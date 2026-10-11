@@ -89,3 +89,42 @@ data class SoakCheckpointEntity(
     val isLogOnlyMode: Boolean,
     val notes: String? = null
 )
+
+@Entity(
+    tableName = "heartbeat_logs",
+    indices = [Index(value = ["timestamp"])]
+)
+data class HeartbeatLogEntity(
+    @PrimaryKey
+    val id: String,
+    val timestamp: String, // ISO 8601 UTC
+    @ColumnInfo(name = "event_type")
+    val eventType: String, // "PROCESS_START", "EXIT_INFO", "LISTENER_CONNECTED", "LISTENER_DISCONNECTED", "NOTIFICATION_POSTED", "SERVICE_CREATE", "SERVICE_DESTROY", "SERVICE_TASK_REMOVED", "BOOT_COMPLETED", "WORKMANAGER_TICK", "MANUAL_CHECKPOINT"
+    val details: String = "",
+    @ColumnInfo(name = "listener_connected")
+    val listenerConnected: Boolean,
+    @ColumnInfo(name = "notification_count")
+    val notificationCount: Int,
+    @ColumnInfo(name = "is_log_only_mode")
+    val isLogOnlyMode: Boolean
+)
+
+@Entity(
+    tableName = "alarm_test_records",
+    indices = [Index(value = ["scheduled_time_ms"])]
+)
+data class AlarmTestEntity(
+    @PrimaryKey
+    val id: String,
+    @ColumnInfo(name = "created_at")
+    val createdAt: String,
+    @ColumnInfo(name = "scheduled_time_ms")
+    val scheduledTimeMs: Long,
+    @ColumnInfo(name = "fired_time_ms")
+    val firedTimeMs: Long? = null,
+    @ColumnInfo(name = "delay_ms")
+    val delayMs: Long? = null,
+    @ColumnInfo(name = "fired_after_reboot")
+    val firedAfterReboot: Boolean = false,
+    val status: String = "SCHEDULED" // "SCHEDULED", "FIRED", "MISSED"
+)

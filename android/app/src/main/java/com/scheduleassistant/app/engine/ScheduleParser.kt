@@ -374,7 +374,7 @@ class ScheduleParser(
             type = type,
             title = title,
             start = startIso,
-            start_date = if (timeUnspecified) startDateStr else null,
+            start_date = startDateStr,
             time_unspecified = timeUnspecified,
             ambiguous = isAmbiguous,
             target = target,

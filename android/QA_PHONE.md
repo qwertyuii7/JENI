@@ -89,7 +89,10 @@ Launch **Schedule Assistant** -> tap **Diagnostics** tab (bottom right) and veri
 - [ ] **Notification Listener State**: Displays `CONNECTED` (Green badge) (needs owner verification)
 - [ ] **Foreground Service**: Displays `ACTIVE` (Green badge) (needs owner verification)
 - [ ] **POST_NOTIFICATIONS**: Displays `GRANTED` (Green badge) (needs owner verification)
-- [ ] **Log-Only Mode**: Toggle is **ON** (locked on for soak testing) (needs owner verification)
+- [ ] **Log-Only Mode Scope**: Toggle is **ON**; verified that log-only applies solely to real notification-listener ingestion, while Debug injection + Confirm + alarms remain functional (needs owner verification)
+- [ ] **Alarm Self-Test Control**: "Schedule test alarm" control (+1m, +2m, +5m, +10m) uses `setAlarmClock` and records scheduled vs actual fire time, delay in ms, and post-reboot survival without touching parser/events (needs owner verification)
+- [ ] **Automatic Heartbeat Log**: Append-only log automatically records ticks on process start (`Application.onCreate`), listener connect/disconnect, notifications (count only), service lifecycle, boot, and every 15 min via WorkManager (needs owner verification)
+- [ ] **ApplicationExitInfo Historical Reasons**: Previous process exit reasons with timestamps automatically logged on process start (needs owner verification)
 
 ---
 
@@ -152,10 +155,17 @@ During the 48-hour soak window, execute these five stress scenarios:
 
 ## 4. Hourly Soak Logging & Export Protocol
 
-**Rule**: **Log-only mode must remain ON** throughout the 48-hour soak test so real personal messages are never converted into unwanted alerts or alarms.
+**Rule**: **Log-only mode must remain ON for real WhatsApp notifications** throughout the 48-hour soak test so real personal chatter is never converted into unwanted alerts or alarms. Debug injection, Confirm, and Alarm Self-Test remain fully functional.
 
-### Hourly Checkpoint Recording Schedule:
-At each milestone checkpoint, open **Diagnostics** tab and tap **"+ Record Hourly Checkpoint"**:
+### Automatic Heartbeat & Checkpoints:
+- **Automatic Heartbeat Log (Append-Only)**: The app runs continuous background logging with zero owner action required:
+  - Process start (`Application.onCreate`) + `ApplicationExitInfo` historical exit reasons
+  - Listener connection / disconnection events
+  - Notification posted events (count only, zero message payload stored in heartbeat)
+  - Foreground service lifecycle (`onCreate`, `onDestroy`, `onTaskRemoved`)
+  - Device boot recovery (`BOOT_COMPLETED`)
+  - Periodic 15-minute background ticks scheduled via WorkManager
+- **Manual Milestone Checkpoints (Optional)**: At each milestone, you may optionally open the **Diagnostics** tab and tap **"+ Record Checkpoint (Optional)"**:
 
 | Milestone | Target Elapsed | Checkpoint Item | Owner Verification |
 | :--- | :--- | :--- | :--- |
@@ -175,7 +185,9 @@ At each milestone checkpoint, open **Diagnostics** tab and tap **"+ Record Hourl
 3. Save or share the generated `anonymized_schedule_diagnostics_<date>.json`.
 4. Inspect the JSON file:
    - Contains `target_device: "Samsung Galaxy A15 5G"`, `os_version: "Android 16 / One UI 8.5"`.
-   - Contains all hourly `soak_checkpoints` recording listener status, captured count, and timestamps.
+   - Contains all hourly `soak_checkpoints`.
+   - Contains full `heartbeat_logs` (automatic append-only records from WorkManager, process start, listener, services, boot).
+   - Contains `historical_exit_reasons` extracted from Android `ApplicationExitInfo`.
    - All phone numbers masked as `[PHONE_MASKED]`.
    - All sender names pseudonymized as `[PERSON_1]`, `[PERSON_2]`.
    - Schedule keywords, verbs, and times preserved.
@@ -191,11 +203,13 @@ Before approving transition to Milestone 4 (Relay & Synchronization), verify eve
 - [ ] **Summary Skipping**: Group summary bundles never produced phantom events (needs owner verification)
 - [ ] **Sender Prefix Splitting**: Clean extraction of `"Sender: message"` without sender text polluting titles (needs owner verification)
 - [ ] **Exact Alarms in Doze**: Fired on time during 8h overnight screen-off (needs owner verification)
+- [ ] **Alarm Self-Test**: Test alarms fired on the exact minute and survived reboot with `firedAfterReboot = true` without touching events (needs owner verification)
+- [ ] **Automatic Heartbeat**: Append-only heartbeat ticks recorded continuously across process starts, reboots, and 15m intervals (needs owner verification)
 - [ ] **Boot Recovery**: Service and alarms auto-recovered after phone reboot without UI launch (needs owner verification)
 - [ ] **Battery Consumption**: Total 48h battery drain attributable to Schedule Assistant < 1.5% (needs owner verification)
 - [ ] **Memory Stability**: Zero native memory leaks or crash loops under camera/gaming pressure (needs owner verification)
-- [ ] **Log-Only Invariant**: Zero unwanted alarms or pending events triggered during soak test (needs owner verification)
-- [ ] **SQLite Immutability**: Room `events` table triggers prevented updates and deletes (needs owner verification)
+- [ ] **Log-Only Invariant**: Real WhatsApp chat produced zero unintended alarms, while Debug screen injection remained functional (needs owner verification)
+- [ ] **SQLite Immutability**: Room `events` and `heartbeat_logs` triggers strictly prevented updates and deletes (needs owner verification)
 
 **Verification Sign-Off Date**: `________________________`  
 **Verified by Owner**: `________________________`  

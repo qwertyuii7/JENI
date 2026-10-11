@@ -98,6 +98,50 @@ class AlarmScheduler(private val context: Context) {
         alarmManager.setAlarmClock(alarmClockInfo, alarmPendingIntent)
     }
 
+    // Requirement 2: Alarm self-test, independent of log-only and of the event pipeline
+    suspend fun scheduleTestAlarm(triggerMs: Long): com.scheduleassistant.app.data.db.AlarmTestEntity {
+        val db = AppDatabase.getInstance(context)
+        val testId = "test-alarm-${UUID.randomUUID()}"
+        val nowIso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+            timeZone = TimeZone.getTimeZone("UTC")
+        }.format(Date())
+
+        val record = com.scheduleassistant.app.data.db.AlarmTestEntity(
+            id = testId,
+            createdAt = nowIso,
+            scheduledTimeMs = triggerMs,
+            status = "SCHEDULED"
+        )
+        db.alarmTestDao().insertTestRecord(record)
+        scheduleTestAlarmClock(testId, triggerMs, firedAfterReboot = false)
+        return record
+    }
+
+    fun scheduleTestAlarmClock(testId: String, triggerMs: Long, firedAfterReboot: Boolean = false) {
+        val id = testId.hashCode()
+        val showIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        }
+        val showPendingIntent = PendingIntent.getActivity(
+            context, id, showIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val alarmIntent = Intent(context, AlarmReceiver::class.java).apply {
+            putExtra("EXTRA_IS_TEST_ALARM", true)
+            putExtra("EXTRA_TEST_ALARM_ID", testId)
+            putExtra("EXTRA_SCHEDULED_TIME_MS", triggerMs)
+            putExtra("EXTRA_FIRED_AFTER_REBOOT", firedAfterReboot)
+        }
+        val alarmPendingIntent = PendingIntent.getBroadcast(
+            context, id, alarmIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val alarmClockInfo = AlarmManager.AlarmClockInfo(triggerMs, showPendingIntent)
+        alarmManager.setAlarmClock(alarmClockInfo, alarmPendingIntent)
+    }
+
     fun cancelAlertsForSchedule(scheduleId: String) {
         val id = scheduleId.hashCode()
         val alarmIntent = Intent(context, AlarmReceiver::class.java)
@@ -110,10 +154,7 @@ class AlarmScheduler(private val context: Context) {
 
 class AlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        val title = intent.getStringExtra("EXTRA_TITLE") ?: "Schedule Alert"
-        val scheduleId = intent.getStringExtra("EXTRA_SCHEDULE_ID") ?: ""
-        val type = intent.getStringExtra("EXTRA_TYPE") ?: "alarm"
-        val triggerMs = intent.getLongExtra("EXTRA_TRIGGER_MS", System.currentTimeMillis())
+        val isTestAlarm = intent.getBooleanExtra("EXTRA_IS_TEST_ALARM", false)
 
         val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
         val wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ScheduleAssistant:AlarmWakeLock")
@@ -129,6 +170,64 @@ class AlarmReceiver : BroadcastReceiver() {
             }
             notificationManager.createNotificationChannel(channel)
         }
+
+        // Requirement 2: Handle Alarm Self-Test (Must not create events or touch parser state)
+        if (isTestAlarm) {
+            val testId = intent.getStringExtra("EXTRA_TEST_ALARM_ID") ?: ""
+            val scheduledTimeMs = intent.getLongExtra("EXTRA_SCHEDULED_TIME_MS", System.currentTimeMillis())
+            val firedAfterReboot = intent.getBooleanExtra("EXTRA_FIRED_AFTER_REBOOT", false)
+            val firedTimeMs = System.currentTimeMillis()
+            val delayMs = firedTimeMs - scheduledTimeMs
+
+            val timeFormat = SimpleDateFormat("h:mm:ss a", Locale.US)
+            val schedStr = timeFormat.format(Date(scheduledTimeMs))
+            val fireStr = timeFormat.format(Date(firedTimeMs))
+
+            val openIntent = Intent(context, MainActivity::class.java)
+            val pendingOpen = PendingIntent.getActivity(
+                context, testId.hashCode(), openIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val notification = NotificationCompat.Builder(context, channelId)
+                .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+                .setContentTitle("🧪 Test Alarm Fired (${if (firedAfterReboot) "Post-Reboot" else "Normal"})")
+                .setContentText("Sched: $schedStr | Actual: $fireStr | Delay: ${delayMs}ms")
+                .setPriority(NotificationCompat.PRIORITY_MAX)
+                .setCategory(NotificationCompat.CATEGORY_ALARM)
+                .setContentIntent(pendingOpen)
+                .setAutoCancel(true)
+                .build()
+
+            notificationManager.notify(testId.hashCode(), notification)
+
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val db = AppDatabase.getInstance(context)
+                    val record = db.alarmTestDao().getRecordById(testId)
+                    if (record != null) {
+                        db.alarmTestDao().updateTestRecord(
+                            record.copy(
+                                firedTimeMs = firedTimeMs,
+                                delayMs = delayMs,
+                                firedAfterReboot = firedAfterReboot,
+                                status = "FIRED"
+                            )
+                        )
+                    }
+                } finally {
+                    if (wakeLock.isHeld) {
+                        wakeLock.release()
+                    }
+                }
+            }
+            return
+        }
+
+        val title = intent.getStringExtra("EXTRA_TITLE") ?: "Schedule Alert"
+        val scheduleId = intent.getStringExtra("EXTRA_SCHEDULE_ID") ?: ""
+        val type = intent.getStringExtra("EXTRA_TYPE") ?: "alarm"
+        val triggerMs = intent.getLongExtra("EXTRA_TRIGGER_MS", System.currentTimeMillis())
 
         // Check if missed due to device downtime
         val isMissed = (System.currentTimeMillis() - triggerMs) > 60_000
@@ -196,9 +295,19 @@ class BootReceiver : BroadcastReceiver() {
         val action = intent.action
         if (action == Intent.ACTION_BOOT_COMPLETED || action == Intent.ACTION_MY_PACKAGE_REPLACED || action == "android.intent.action.QUICKBOOT_POWERON") {
             DiagnosticsManager.recordBootRecovery(context)
-            // Restore alarms on reboot from Room database
             CoroutineScope(Dispatchers.IO).launch {
+                DiagnosticsManager.recordHeartbeat(context, "BOOT_COMPLETED", "Action: $action")
+
                 val db = AppDatabase.getInstance(context)
+                val scheduler = AlarmScheduler(context)
+
+                // Restore pending self-test alarms (marked firedAfterReboot = true)
+                val pendingTestAlarms = db.alarmTestDao().getPendingRecords(System.currentTimeMillis())
+                for (testAlarm in pendingTestAlarms) {
+                    scheduler.scheduleTestAlarmClock(testAlarm.id, testAlarm.scheduledTimeMs, firedAfterReboot = true)
+                }
+
+                // Restore regular alarms on reboot from Room database
                 val entities = db.eventDao().getAllEvents()
                 val syncEvents = entities.map { e ->
                     val payloadJson = JSONObject(e.payload)
@@ -221,8 +330,6 @@ class BootReceiver : BroadcastReceiver() {
                 }
 
                 val state = ProjectionEngine.projectState(syncEvents)
-                val scheduler = AlarmScheduler(context)
-
                 for (schedule in state.schedules.values) {
                     if (schedule.status == ScheduleStatus.CONFIRMED && !schedule.time_unspecified && schedule.start != null) {
                         scheduler.scheduleAlertsForSchedule(schedule)

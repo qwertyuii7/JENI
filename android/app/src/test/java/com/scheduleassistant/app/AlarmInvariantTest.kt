@@ -155,4 +155,45 @@ class AlarmInvariantTest {
             isEligibleForAlarm(schedule)
         )
     }
+
+    @Test
+    fun testAlarmSelfTestNeverCreatesSyncEventsOrModifiesProjectionState() {
+        val initialEvents = listOf(
+            SyncEvent(
+                id = "ev-1",
+                timestamp = "2026-10-12T10:00:00Z",
+                device_id = "phone-1",
+                seq = 1,
+                hlc = "1000:0:phone-1",
+                type = "event_extracted",
+                entity_id = "sched-1",
+                payload = mapOf(
+                    "title" to "Team Sync",
+                    "start" to "2026-10-12T11:00:00+05:30",
+                    "confidence" to 0.95
+                )
+            )
+        )
+
+        val stateBefore = ProjectionEngine.projectState(initialEvents)
+
+        // Alarm self-test creates an AlarmTestEntity record directly, NOT a SyncEvent
+        val testAlarmRecord = com.scheduleassistant.app.data.db.AlarmTestEntity(
+            id = "test-alarm-123",
+            createdAt = "2026-10-12T10:00:00Z",
+            scheduledTimeMs = System.currentTimeMillis() + 60_000L,
+            firedTimeMs = System.currentTimeMillis() + 60_050L,
+            delayMs = 50L,
+            firedAfterReboot = true,
+            status = "FIRED"
+        )
+
+        val stateAfter = ProjectionEngine.projectState(initialEvents)
+
+        assertEquals("Self-test alarm must not alter schedules count", stateBefore.schedules.size, stateAfter.schedules.size)
+        assertEquals("Self-test alarm must not alter reminders count", stateBefore.reminders.size, stateAfter.reminders.size)
+        assertEquals(50L, testAlarmRecord.delayMs)
+        assertTrue(testAlarmRecord.firedAfterReboot)
+        assertEquals("FIRED", testAlarmRecord.status)
+    }
 }

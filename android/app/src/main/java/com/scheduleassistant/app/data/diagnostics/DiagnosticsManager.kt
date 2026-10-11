@@ -1,15 +1,25 @@
 package com.scheduleassistant.app.data.diagnostics
 
+import android.app.ActivityManager
+import android.app.ApplicationExitInfo
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.os.Build
+import android.os.SystemClock
+import android.util.Log
 import androidx.core.content.FileProvider
+import androidx.work.CoroutineWorker
+import androidx.work.WorkerParameters
 import com.scheduleassistant.app.data.db.AppDatabase
 import com.scheduleassistant.app.data.db.DiagnosticLogEntity
+import com.scheduleassistant.app.data.db.HeartbeatLogEntity
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -92,7 +102,90 @@ object DiagnosticsManager {
             notes = notes
         )
         db.soakCheckpointDao().insertSoakCheckpoint(checkpoint)
+        // Also log a manual checkpoint in heartbeat
+        recordHeartbeat(context, "MANUAL_CHECKPOINT", notes ?: "Manual Checkpoint Hour #$hourIndex")
         return checkpoint
+    }
+
+    suspend fun recordHeartbeat(
+        context: Context,
+        eventType: String,
+        details: String = "",
+        timestampMs: Long = System.currentTimeMillis()
+    ): HeartbeatLogEntity {
+        val db = AppDatabase.getInstance(context)
+        val nowIso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+            timeZone = TimeZone.getTimeZone("UTC")
+        }.format(Date(timestampMs))
+
+        val entity = HeartbeatLogEntity(
+            id = UUID.randomUUID().toString(),
+            timestamp = nowIso,
+            eventType = eventType,
+            details = details,
+            listenerConnected = _isListenerConnected.value,
+            notificationCount = db.diagnosticLogDao().getDiagnosticLogCount(),
+            isLogOnlyMode = isLogOnlyMode(context)
+        )
+        db.heartbeatLogDao().insertHeartbeat(entity)
+        return entity
+    }
+
+    fun logProcessStartAndExitInfo(context: Context) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                recordHeartbeat(
+                    context,
+                    "PROCESS_START",
+                    "Application.onCreate - PID ${android.os.Process.myPid()}"
+                )
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+                    val exitReasons = activityManager?.getHistoricalProcessExitReasons(context.packageName, 0, 10)
+                    exitReasons?.forEach { exitInfo ->
+                        val reasonStr = when (exitInfo.reason) {
+                            ApplicationExitInfo.REASON_ANR -> "REASON_ANR"
+                            ApplicationExitInfo.REASON_CRASH -> "REASON_CRASH"
+                            ApplicationExitInfo.REASON_CRASH_NATIVE -> "REASON_CRASH_NATIVE"
+                            ApplicationExitInfo.REASON_DEPENDENCY_DIED -> "REASON_DEPENDENCY_DIED"
+                            ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE -> "REASON_EXCESSIVE_RESOURCE_USAGE"
+                            ApplicationExitInfo.REASON_EXIT_SELF -> "REASON_EXIT_SELF"
+                            ApplicationExitInfo.REASON_INITIALIZATION_FAILURE -> "REASON_INITIALIZATION_FAILURE"
+                            ApplicationExitInfo.REASON_LOW_MEMORY -> "REASON_LOW_MEMORY"
+                            ApplicationExitInfo.REASON_OTHER -> "REASON_OTHER"
+                            ApplicationExitInfo.REASON_PERMISSION_CHANGE -> "REASON_PERMISSION_CHANGE"
+                            ApplicationExitInfo.REASON_SIGNALED -> "REASON_SIGNALED"
+                            ApplicationExitInfo.REASON_USER_REQUESTED -> "REASON_USER_REQUESTED"
+                            else -> "UNKNOWN (${exitInfo.reason})"
+                        }
+
+                        val detailsJson = JSONObject().apply {
+                            put("reason_code", exitInfo.reason)
+                            put("reason_name", reasonStr)
+                            put("timestamp", exitInfo.timestamp)
+                            put("timestamp_iso", SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+                                timeZone = TimeZone.getTimeZone("UTC")
+                            }.format(Date(exitInfo.timestamp)))
+                            put("description", exitInfo.description ?: "")
+                            put("importance", exitInfo.importance)
+                            put("status", exitInfo.status)
+                            put("pss_kb", exitInfo.pss)
+                            put("rss_kb", exitInfo.rss)
+                        }
+
+                        recordHeartbeat(
+                            context,
+                            "EXIT_INFO",
+                            detailsJson.toString(),
+                            exitInfo.timestamp
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("DiagnosticsManager", "Failed to log process start or exit reasons: ${e.message}", e)
+            }
+        }
     }
 
     fun getAllowedPackages(context: Context): Set<String> {
@@ -202,6 +295,41 @@ object DiagnosticsManager {
         }
         exportWrapper.put("soak_checkpoints", checkpointsArray)
 
+        // Requirement 4: Export heartbeat log
+        val heartbeats = db.heartbeatLogDao().getAllHeartbeats()
+        val heartbeatsArray = JSONArray()
+        for (hb in heartbeats) {
+            val hbObj = JSONObject()
+            hbObj.put("id", hb.id)
+            hbObj.put("timestamp", hb.timestamp)
+            hbObj.put("event_type", hb.eventType)
+            hbObj.put("details", hb.details)
+            hbObj.put("listener_connected", hb.listenerConnected)
+            hbObj.put("notification_count", hb.notificationCount)
+            hbObj.put("is_log_only_mode", hb.isLogOnlyMode)
+            heartbeatsArray.put(hbObj)
+        }
+        exportWrapper.put("heartbeat_logs", heartbeatsArray)
+
+        // Requirement 4: Export exit reasons
+        val exitReasonsArray = JSONArray()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+            val exitReasons = activityManager?.getHistoricalProcessExitReasons(context.packageName, 0, 10)
+            exitReasons?.forEach { exitInfo ->
+                val obj = JSONObject()
+                obj.put("reason", exitInfo.reason)
+                obj.put("description", exitInfo.description ?: "")
+                obj.put("timestamp", exitInfo.timestamp)
+                obj.put("importance", exitInfo.importance)
+                obj.put("status", exitInfo.status)
+                obj.put("pss", exitInfo.pss)
+                obj.put("rss", exitInfo.rss)
+                exitReasonsArray.put(obj)
+            }
+        }
+        exportWrapper.put("historical_exit_reasons", exitReasonsArray)
+
         file.writeText(exportWrapper.toString(2))
         return file
     }
@@ -222,5 +350,19 @@ object DiagnosticsManager {
         }
 
         context.startActivity(Intent.createChooser(shareIntent, "Share Anonymized Logs"))
+    }
+}
+
+class HeartbeatWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    override suspend fun doWork(): Result {
+        val pm = applicationContext.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+        val isIgnoring = pm?.isIgnoringBatteryOptimizations(applicationContext.packageName) ?: false
+        val details = JSONObject().apply {
+            put("tick", "15min_workmanager")
+            put("isIgnoringBatteryOptimizations", isIgnoring)
+            put("systemUptimeMs", SystemClock.elapsedRealtime())
+        }.toString()
+        DiagnosticsManager.recordHeartbeat(applicationContext, "WORKMANAGER_TICK", details)
+        return Result.success()
     }
 }

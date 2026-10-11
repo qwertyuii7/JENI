@@ -13,7 +13,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import com.scheduleassistant.app.data.db.AppDatabase
 import com.scheduleassistant.app.data.db.SoakCheckpointEntity
 import com.scheduleassistant.app.data.diagnostics.DiagnosticsManager
@@ -567,6 +567,12 @@ fun DiagnosticsScreen(
     val db = remember { AppDatabase.getInstance(context) }
     val soakFlow = remember { db.soakCheckpointDao().getAllSoakCheckpointsFlow() }
     val soakCheckpoints by soakFlow.collectAsState(initial = emptyList())
+    val alarmTestsFlow = remember { db.alarmTestDao().getAllRecordsFlow() }
+    val alarmTestRecords by alarmTestsFlow.collectAsState(initial = emptyList())
+    val heartbeatsFlow = remember { db.heartbeatLogDao().getAllHeartbeatsFlow() }
+    val heartbeats by heartbeatsFlow.collectAsState(initial = emptyList())
+    var testAlarmMinutes by remember { mutableStateOf("1") }
+    var testAlarmMessage by remember { mutableStateOf<String?>(null) }
 
     val lastNotificationTime = remember { DiagnosticsManager.getLastNotificationReceivedTime(context) }
     val lastBootTime = remember { DiagnosticsManager.getLastBootRecoveryTime(context) }
@@ -844,7 +850,7 @@ fun DiagnosticsScreen(
             }
         }
 
-        // 2. Soak Testing Hourly Log Card (Requirement 4)
+        // 2. Alarm Self-Test Card (Requirement 2: independent of log-only and events)
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = CardBg),
@@ -858,8 +864,154 @@ fun DiagnosticsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("48-Hour Soak Log (Hourly Checkpoints)", fontWeight = FontWeight.Bold, color = TextLight, fontSize = 16.sp)
-                            Text("Log-only mode must stay ON during soak testing. (needs owner verification)", color = TextMuted, fontSize = 12.sp)
+                            Text("Alarm Self-Test (Independent of Log-Only & Events)", fontWeight = FontWeight.Bold, color = TextLight, fontSize = 16.sp)
+                            Text("Uses setAlarmClock and records scheduled vs actual fire time. Never touches parser/events. (needs owner verification)", color = TextMuted, fontSize = 12.sp)
+                        }
+                        Badge(containerColor = Primary) {
+                            Text("EXACT ALARM", color = Color.White)
+                        }
+                    }
+
+                    // Quick Schedule Buttons
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf(1, 2, 5, 10).forEach { mins ->
+                            Button(
+                                onClick = {
+                                    coroutineScope.launch {
+                                        val triggerMs = System.currentTimeMillis() + mins * 60 * 1000L
+                                        val scheduler = com.scheduleassistant.app.service.AlarmScheduler(context)
+                                        val record = scheduler.scheduleTestAlarm(triggerMs)
+                                        val timeStr = SimpleDateFormat("h:mm:ss a", Locale.US).format(Date(triggerMs))
+                                        testAlarmMessage = "Scheduled +${mins}m test alarm for $timeStr"
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = CardBorder),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("+${mins}m", fontSize = 11.sp, color = TextLight)
+                            }
+                        }
+                    }
+
+                    if (testAlarmMessage != null) {
+                        Text(testAlarmMessage!!, color = Success, fontSize = 12.sp)
+                    }
+
+                    if (alarmTestRecords.isEmpty()) {
+                        Text("No test alarms executed yet. Tap a button above to schedule an exact AlarmClock self-test. (needs owner verification)", color = TextMuted, fontSize = 12.sp)
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            alarmTestRecords.take(5).forEach { rec ->
+                                Surface(
+                                    color = Color(0x33000000),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(10.dp).fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column {
+                                            val timeFormat = SimpleDateFormat("h:mm:ss a", Locale.US)
+                                            val schedStr = timeFormat.format(Date(rec.scheduledTimeMs))
+                                            val fireStr = if (rec.firedTimeMs != null) timeFormat.format(Date(rec.firedTimeMs)) else "Pending"
+                                            Text("Sched: $schedStr • Actual: $fireStr", fontWeight = FontWeight.Bold, color = TextLight, fontSize = 12.sp)
+                                            Text(
+                                                "Delay: ${rec.delayMs?.let { "${it}ms" } ?: "N/A"} • Fired after reboot: ${if (rec.firedAfterReboot) "YES" else "NO"} (needs owner verification)",
+                                                color = if (rec.firedAfterReboot) Accent else TextMuted,
+                                                fontSize = 11.sp
+                                            )
+                                        }
+                                        Badge(containerColor = if (rec.status == "FIRED") Success else Warning) {
+                                            Text(rec.status, color = if (rec.status == "FIRED") Color.White else Color.Black, fontSize = 10.sp)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Automatic Heartbeat Log Card (Requirement 1: append-only, no user action)
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = CardBg),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Automatic Heartbeat Log (Append-Only)", fontWeight = FontWeight.Bold, color = TextLight, fontSize = 16.sp)
+                            Text("Automatic logging on process start, listener connect/disconnect, notifications (count only), service lifecycle, boot, & 15m WorkManager. (needs owner verification)", color = TextMuted, fontSize = 12.sp)
+                        }
+                        Badge(containerColor = Success) {
+                            Text("${heartbeats.size} TICKS", color = Color.White)
+                        }
+                    }
+
+                    if (heartbeats.isEmpty()) {
+                        Text("No heartbeat entries recorded yet. (needs owner verification)", color = TextMuted, fontSize = 12.sp)
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            heartbeats.take(6).forEach { hb ->
+                                Surface(
+                                    color = Color(0x33000000),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(8.dp).fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                Text(hb.eventType, fontWeight = FontWeight.Bold, color = Primary, fontSize = 11.sp)
+                                                Text(hb.timestamp.take(19).replace("T", " "), color = TextMuted, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                                            }
+                                            if (hb.details.isNotBlank()) {
+                                                Text(hb.details, color = TextLight, fontSize = 11.sp, maxLines = 2)
+                                            }
+                                        }
+                                        Badge(containerColor = if (hb.listenerConnected) Success else Danger) {
+                                            Text(if (hb.listenerConnected) "CONN" else "DOWN", color = Color.White, fontSize = 9.sp)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4. Soak Testing Hourly Log Card (Requirement 4)
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = CardBg),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("48-Hour Soak Log & Checkpoints", fontWeight = FontWeight.Bold, color = TextLight, fontSize = 16.sp)
+                            Text("Log-only applies solely to real listener ingestion. Debug injection + confirm + alarms remain fully functional. (needs owner verification)", color = TextMuted, fontSize = 12.sp)
                         }
                         Badge(containerColor = Success) {
                             Text("LOG-ONLY ON", color = Color.White)
@@ -873,7 +1025,7 @@ fun DiagnosticsScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text("Log-Only Mode Toggle", color = TextLight, fontSize = 14.sp)
-                            Text("Creates NO pending items or alarms while enabled.", color = TextMuted, fontSize = 12.sp)
+                            Text("Applies solely to real WhatsApp listener ingestion. (needs owner verification)", color = TextMuted, fontSize = 12.sp)
                         }
                         Switch(
                             checked = isLogOnlyMode,
@@ -891,17 +1043,17 @@ fun DiagnosticsScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Recorded Checkpoints: ${soakCheckpoints.size}/48", color = Accent, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                        Text("Checkpoints: ${soakCheckpoints.size}/48 (Optional)", color = Accent, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                         Button(
                             onClick = {
                                 coroutineScope.launch {
-                                    val cp = DiagnosticsManager.recordHourlyCheckpoint(context, "Manual Soak Checkpoint")
+                                    val cp = DiagnosticsManager.recordHourlyCheckpoint(context, "Optional Manual Soak Checkpoint")
                                     soakRecordMessage = "Hour #${cp.hourIndex} recorded (${if (cp.listenerConnected) "Connected" else "Down"})"
                                 }
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = Primary)
                         ) {
-                            Text("+ Record Hourly Checkpoint", fontSize = 12.sp)
+                            Text("+ Record Checkpoint (Optional)", fontSize = 11.sp)
                         }
                     }
 
@@ -909,11 +1061,9 @@ fun DiagnosticsScreen(
                         Text(soakRecordMessage!!, color = Success, fontSize = 12.sp)
                     }
 
-                    if (soakCheckpoints.isEmpty()) {
-                        Text("No hourly checkpoints recorded yet. Tap '+ Record Hourly Checkpoint' at each soak milestone. (needs owner verification)", color = TextMuted, fontSize = 12.sp)
-                    } else {
+                    if (soakCheckpoints.isNotEmpty()) {
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            soakCheckpoints.takeLast(5).reversed().forEach { cp ->
+                            soakCheckpoints.takeLast(4).reversed().forEach { cp ->
                                 Surface(
                                     color = Color(0x33000000),
                                     shape = RoundedCornerShape(8.dp),

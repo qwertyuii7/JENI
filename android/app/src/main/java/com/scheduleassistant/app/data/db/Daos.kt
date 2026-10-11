@@ -78,4 +78,43 @@ interface SoakCheckpointDao {
     suspend fun clearAllCheckpoints()
 }
 
+@Dao
+interface HeartbeatLogDao {
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertHeartbeat(heartbeat: HeartbeatLogEntity): Long
+
+    @Query("SELECT * FROM heartbeat_logs ORDER BY timestamp DESC")
+    fun getAllHeartbeatsFlow(): Flow<List<HeartbeatLogEntity>>
+
+    @Query("SELECT * FROM heartbeat_logs ORDER BY timestamp ASC")
+    suspend fun getAllHeartbeats(): List<HeartbeatLogEntity>
+
+    @Query("SELECT * FROM heartbeat_logs ORDER BY timestamp DESC LIMIT :limit")
+    suspend fun getRecentHeartbeats(limit: Int): List<HeartbeatLogEntity>
+
+    @Query("SELECT COUNT(*) FROM heartbeat_logs")
+    suspend fun getHeartbeatCount(): Int
+}
+
+@Dao
+interface AlarmTestDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertTestRecord(record: AlarmTestEntity): Long
+
+    @androidx.room.Update
+    suspend fun updateTestRecord(record: AlarmTestEntity)
+
+    @Query("SELECT * FROM alarm_test_records WHERE id = :id")
+    suspend fun getRecordById(id: String): AlarmTestEntity?
+
+    @Query("SELECT * FROM alarm_test_records ORDER BY scheduled_time_ms DESC")
+    fun getAllRecordsFlow(): Flow<List<AlarmTestEntity>>
+
+    @Query("SELECT * FROM alarm_test_records ORDER BY scheduled_time_ms DESC")
+    suspend fun getAllRecords(): List<AlarmTestEntity>
+
+    @Query("SELECT * FROM alarm_test_records WHERE status = 'SCHEDULED' AND scheduled_time_ms > :nowMs")
+    suspend fun getPendingRecords(nowMs: Long): List<AlarmTestEntity>
+}
+
 
