@@ -1,0 +1,24 @@
+{
+  "morning": {
+    "tokens": ["subah", "pratah", "morning", "am", "सुबह"],
+    "start_hour": 0,
+    "end_hour": 11
+  },
+  "afternoon": {
+    "tokens": ["dopahar", "afternoon", "noon", "pm", "दोपहर"],
+    "start_hour": 12,
+    "end_hour": 16
+  },
+  "evening": {
+    "tokens": ["shaam", "sham", "sanjh", "evening", "शाम"],
+    "start_hour": 17,
+    "end_hour": 20
+  },
+  "night": {
+    "tokens": ["raat", "night", "रात"],
+    "pm_hours": [8, 9, 10, 11],
+    "midnight_hour": 12,
+    "early_am_hours": [1, 2, 3, 4],
+    "border_hours": [5, 6, 7]
+  }
+}

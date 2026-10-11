@@ -1,0 +1,15 @@
+{
+  "classes": {
+    "class": ["lecture", "period", "session", "tutorial"],
+    "lecture": ["class", "period", "session", "tutorial"],
+    "period": ["class", "lecture", "session"],
+    "session": ["class", "lecture", "period"]
+  },
+  "meetings": {
+    "meeting": ["sync", "call", "discussion", "huddle", "standup"],
+    "sync": ["meeting", "call", "discussion", "standup"],
+    "call": ["meeting", "sync", "discussion"],
+    "discussion": ["meeting", "sync", "call"],
+    "standup": ["meeting", "sync"]
+  }
+}
