@@ -66,11 +66,33 @@ object DiagnosticsManager {
     }
 
     fun isLogOnlyMode(context: Context): Boolean {
-        return getPrefs(context).getBoolean(KEY_LOG_ONLY_MODE, false)
+        return getPrefs(context).getBoolean(KEY_LOG_ONLY_MODE, true) // Default ON for soak testing
     }
 
     fun setLogOnlyMode(context: Context, enabled: Boolean) {
         getPrefs(context).edit().putBoolean(KEY_LOG_ONLY_MODE, enabled).apply()
+    }
+
+    suspend fun recordHourlyCheckpoint(context: Context, notes: String? = null): com.scheduleassistant.app.data.db.SoakCheckpointEntity {
+        val db = AppDatabase.getInstance(context)
+        val currentCount = db.soakCheckpointDao().getCheckpointCount()
+        val hourIndex = currentCount + 1
+        val nowIso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+            timeZone = TimeZone.getTimeZone("UTC")
+        }.format(Date())
+
+        val checkpoint = com.scheduleassistant.app.data.db.SoakCheckpointEntity(
+            id = UUID.randomUUID().toString(),
+            hourIndex = hourIndex,
+            timestamp = nowIso,
+            listenerConnected = _isListenerConnected.value,
+            lastNotificationTime = getLastNotificationReceivedTime(context),
+            notificationsCapturedCount = db.diagnosticLogDao().getDiagnosticLogCount(),
+            isLogOnlyMode = isLogOnlyMode(context),
+            notes = notes
+        )
+        db.soakCheckpointDao().insertSoakCheckpoint(checkpoint)
+        return checkpoint
     }
 
     fun getAllowedPackages(context: Context): Set<String> {
@@ -157,11 +179,28 @@ object DiagnosticsManager {
 
         val exportWrapper = JSONObject()
         exportWrapper.put("export_version", 1)
+        exportWrapper.put("target_device", "Samsung Galaxy A15 5G")
+        exportWrapper.put("os_version", "Android 16 / One UI 8.5")
         exportWrapper.put("exported_at", SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
             timeZone = TimeZone.getTimeZone("UTC")
         }.format(Date()))
         exportWrapper.put("total_records", array.length())
         exportWrapper.put("records", array)
+
+        val checkpoints = db.soakCheckpointDao().getAllSoakCheckpoints()
+        val checkpointsArray = JSONArray()
+        for (cp in checkpoints) {
+            val cpObj = JSONObject()
+            cpObj.put("hour_index", cp.hourIndex)
+            cpObj.put("timestamp", cp.timestamp)
+            cpObj.put("listener_connected", cp.listenerConnected)
+            cpObj.put("last_notification_time", cp.lastNotificationTime ?: JSONObject.NULL)
+            cpObj.put("notifications_captured_count", cp.notificationsCapturedCount)
+            cpObj.put("is_log_only_mode", cp.isLogOnlyMode)
+            cpObj.put("notes", cp.notes ?: JSONObject.NULL)
+            checkpointsArray.put(cpObj)
+        }
+        exportWrapper.put("soak_checkpoints", checkpointsArray)
 
         file.writeText(exportWrapper.toString(2))
         return file

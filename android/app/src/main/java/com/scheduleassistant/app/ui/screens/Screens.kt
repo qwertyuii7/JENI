@@ -11,6 +11,11 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import androidx.core.content.ContextCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.scheduleassistant.app.data.db.AppDatabase
+import com.scheduleassistant.app.data.db.SoakCheckpointEntity
 import com.scheduleassistant.app.data.diagnostics.DiagnosticsManager
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.background
@@ -534,17 +539,39 @@ fun DiagnosticsScreen(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
-    val isIgnoringBatteryOptimizations = powerManager.isIgnoringBatteryOptimizations(context.packageName)
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    // Requirement 2: Dynamically re-read battery optimization on every resume (never assume persisted after reboot)
+    var isIgnoringBatteryOptimizations by remember {
+        mutableStateOf(powerManager.isIgnoringBatteryOptimizations(context.packageName))
+    }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                isIgnoringBatteryOptimizations = powerManager.isIgnoringBatteryOptimizations(context.packageName)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     val isListenerConnected by DiagnosticsManager.isListenerConnected.collectAsState()
     val isForegroundRunning by DiagnosticsManager.isForegroundServiceRunning.collectAsState()
 
+    // Requirement 4: Log-only mode must stay on
     var isLogOnlyMode by remember { mutableStateOf(DiagnosticsManager.isLogOnlyMode(context)) }
     var isExporting by remember { mutableStateOf(false) }
     var exportMessage by remember { mutableStateOf<String?>(null) }
+    var soakRecordMessage by remember { mutableStateOf<String?>(null) }
+
+    val db = remember { AppDatabase.getInstance(context) }
+    val soakFlow = remember { db.soakCheckpointDao().getAllSoakCheckpointsFlow() }
+    val soakCheckpoints by soakFlow.collectAsState(initial = emptyList())
 
     val lastNotificationTime = remember { DiagnosticsManager.getLastNotificationReceivedTime(context) }
     val lastBootTime = remember { DiagnosticsManager.getLastBootRecoveryTime(context) }
+
+    val isListenerAccessGranted = NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
 
     val isNotificationPermissionGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         ContextCompat.checkSelfPermission(context, "android.permission.POST_NOTIFICATIONS") == android.content.pm.PackageManager.PERMISSION_GRANTED
@@ -563,19 +590,20 @@ fun DiagnosticsScreen(
     ) {
         item {
             Text(
-                text = "Diagnostics & System Health",
+                text = "Diagnostics & Soak Audit",
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
                 color = TextLight
             )
             Text(
-                text = "Real-time background service, listener, and Doze inspection",
+                text = "Samsung Galaxy A15 5G • Android 16 • One UI 8.5",
                 style = MaterialTheme.typography.bodyMedium,
-                color = TextMuted
+                color = Accent,
+                fontWeight = FontWeight.SemiBold
             )
         }
 
-        // Warning banner if listener is down
+        // Listener Warning Banner if Down
         if (!isListenerConnected) {
             item {
                 Card(
@@ -587,24 +615,22 @@ fun DiagnosticsScreen(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.Error, contentDescription = null, tint = Danger)
                             Spacer(Modifier.width(8.dp))
-                            Text("Listener Inactive or Disconnected", color = Danger, fontWeight = FontWeight.Bold)
+                            Text("Notification Listener Disconnected", color = Danger, fontWeight = FontWeight.Bold)
                         }
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            "The Android NotificationListener is not connected. New WhatsApp schedule messages will not be ingested.",
+                            "Listener service is unbound. WhatsApp schedule messages will NOT be ingested. (needs owner verification)",
                             color = TextLight,
                             fontSize = 13.sp
                         )
                         Spacer(Modifier.height(8.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(
-                                onClick = {
-                                    context.startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = Danger)
-                            ) {
-                                Text("Open Listener Settings", color = Color.White, fontSize = 12.sp)
-                            }
+                        Button(
+                            onClick = {
+                                context.startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Danger)
+                        ) {
+                            Text("Open Notification Access", color = Color.White, fontSize = 12.sp)
                         }
                     }
                 }
@@ -619,7 +645,75 @@ fun DiagnosticsScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Core Diagnostics Metrics", fontWeight = FontWeight.Bold, color = TextLight, fontSize = 16.sp)
+                    Text("Core Hardware & Background Diagnostics", fontWeight = FontWeight.Bold, color = TextLight, fontSize = 16.sp)
+
+                    // Restricted Settings Status (Requirement 2)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Restricted Settings (One UI 8.5 / Android 16)", color = TextLight, fontSize = 14.sp)
+                            Text(
+                                if (isListenerAccessGranted) "Sideload restrictions cleared. (needs owner verification)"
+                                else "If Notification Access toggle is disabled, tap App Info -> ⋮ -> 'Allow restricted settings'. (needs owner verification)",
+                                color = TextMuted,
+                                fontSize = 12.sp
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Badge(containerColor = if (isListenerAccessGranted) Success else Warning) {
+                            Text(if (isListenerAccessGranted) "ALLOWED" else "VERIFY", color = Color.White)
+                        }
+                    }
+
+                    Divider(color = CardBorder)
+
+                    // Samsung Sleeping / Deep Sleeping Status (Requirement 2)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Samsung Sleep / Deep Sleep Status", color = TextLight, fontSize = 14.sp)
+                            Text(
+                                "Settings -> Battery -> Background usage limits -> Never auto sleeping apps -> Add Schedule Assistant. (needs owner verification)",
+                                color = TextMuted,
+                                fontSize = 12.sp
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Badge(containerColor = Primary) {
+                            Text("VERIFY MANUALLY", color = Color.White)
+                        }
+                    }
+
+                    Divider(color = CardBorder)
+
+                    // Battery Whitelist Status (Requirement 2: re-read after reboot)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Battery Whitelist (Live OS Query)", color = TextLight, fontSize = 14.sp)
+                            Text(
+                                if (isIgnoringBatteryOptimizations) "Exempted from Doze restrictions. Freshly queried. (needs owner verification)"
+                                else "Optimized (Risk of OS sleep kill). Tap Configure. (needs owner verification)",
+                                color = TextMuted,
+                                fontSize = 12.sp
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Badge(containerColor = if (isIgnoringBatteryOptimizations) Success else Warning) {
+                            Text(if (isIgnoringBatteryOptimizations) "WHITELISTED" else "OPTIMIZED", color = Color.Black)
+                        }
+                    }
+
+                    Divider(color = CardBorder)
 
                     // Listener Connected State
                     Row(
@@ -627,10 +721,16 @@ fun DiagnosticsScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text("Notification Listener State", color = TextLight, fontSize = 14.sp)
-                            Text(if (isListenerConnected) "Receiving WhatsApp notifications" else "Listener unbound / disconnected", color = TextMuted, fontSize = 12.sp)
+                            Text(
+                                if (isListenerConnected) "Connected to notification pipeline. (needs owner verification)"
+                                else "Listener unbound / disconnected. (needs owner verification)",
+                                color = TextMuted,
+                                fontSize = 12.sp
+                            )
                         }
+                        Spacer(Modifier.width(8.dp))
                         Badge(containerColor = if (isListenerConnected) Success else Danger) {
                             Text(if (isListenerConnected) "CONNECTED" else "DOWN", color = Color.White)
                         }
@@ -638,16 +738,17 @@ fun DiagnosticsScreen(
 
                     Divider(color = CardBorder)
 
-                    // Last Notification Received Time
+                    // Last Notification Ingested
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text("Last Notification Ingested", color = TextLight, fontSize = 14.sp)
-                            Text("WhatsApp message timestamp", color = TextMuted, fontSize = 12.sp)
+                            Text("WhatsApp message timestamp. (needs owner verification)", color = TextMuted, fontSize = 12.sp)
                         }
+                        Spacer(Modifier.width(8.dp))
                         Text(
                             text = if (lastNotificationTime != null) timeFormatter.format(Date(lastNotificationTime)) else "Never",
                             color = if (lastNotificationTime != null) Accent else TextMuted,
@@ -664,29 +765,13 @@ fun DiagnosticsScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text("Foreground Service", color = TextLight, fontSize = 14.sp)
-                            Text("specialUse background persistence", color = TextMuted, fontSize = 12.sp)
+                            Text("specialUse background service. (needs owner verification)", color = TextMuted, fontSize = 12.sp)
                         }
+                        Spacer(Modifier.width(8.dp))
                         Badge(containerColor = if (isForegroundRunning) Success else Warning) {
-                            Text(if (isForegroundRunning) "ACTIVE" else "INITIALIZING", color = Color.White)
-                        }
-                    }
-
-                    Divider(color = CardBorder)
-
-                    // Battery Optimization Whitelist Status
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text("Battery Whitelist Status", color = TextLight, fontSize = 14.sp)
-                            Text(if (isIgnoringBatteryOptimizations) "Exempted (Protected)" else "Optimized (Risk of OS kill)", color = TextMuted, fontSize = 12.sp)
-                        }
-                        Badge(containerColor = if (isIgnoringBatteryOptimizations) Success else Warning) {
-                            Text(if (isIgnoringBatteryOptimizations) "WHITELISTED" else "OPTIMIZED", color = Color.Black)
+                            Text(if (isForegroundRunning) "ACTIVE" else "STOPPED", color = Color.White)
                         }
                     }
 
@@ -698,10 +783,11 @@ fun DiagnosticsScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
-                            Text("Notification Permission", color = TextLight, fontSize = 14.sp)
-                            Text("POST_NOTIFICATIONS (Android 13+)", color = TextMuted, fontSize = 12.sp)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("POST_NOTIFICATIONS", color = TextLight, fontSize = 14.sp)
+                            Text("System notification posting. (needs owner verification)", color = TextMuted, fontSize = 12.sp)
                         }
+                        Spacer(Modifier.width(8.dp))
                         if (isNotificationPermissionGranted) {
                             Badge(containerColor = Success) { Text("GRANTED", color = Color.White) }
                         } else {
@@ -716,16 +802,17 @@ fun DiagnosticsScreen(
 
                     Divider(color = CardBorder)
 
-                    // Scheduled Alarms Count
+                    // Count of Scheduled Alarms
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text("Scheduled Exact Alarms", color = TextLight, fontSize = 14.sp)
-                            Text("AlarmManager.setAlarmClock (Doze-safe)", color = TextMuted, fontSize = 12.sp)
+                            Text("AlarmManager.setAlarmClock (Doze-safe). (needs owner verification)", color = TextMuted, fontSize = 12.sp)
                         }
+                        Spacer(Modifier.width(8.dp))
                         Text(
                             text = "$scheduledAlarmsCount active",
                             color = Primary,
@@ -742,10 +829,11 @@ fun DiagnosticsScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
-                            Text("Last Boot Recovery", color = TextLight, fontSize = 14.sp)
-                            Text("BOOT_COMPLETED alarm restoration", color = TextMuted, fontSize = 12.sp)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Last Boot Recovery Time", color = TextLight, fontSize = 14.sp)
+                            Text("BOOT_COMPLETED alarm restoration. (needs owner verification)", color = TextMuted, fontSize = 12.sp)
                         }
+                        Spacer(Modifier.width(8.dp))
                         Text(
                             text = if (lastBootTime != null) timeFormatter.format(Date(lastBootTime)) else "None since install",
                             color = TextLight,
@@ -756,7 +844,7 @@ fun DiagnosticsScreen(
             }
         }
 
-        // 2. Log-Only Mode & Anonymized Export Card
+        // 2. Soak Testing Hourly Log Card (Requirement 4)
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = CardBg),
@@ -764,7 +852,19 @@ fun DiagnosticsScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Soak Testing & Log-Only Mode", fontWeight = FontWeight.Bold, color = TextLight, fontSize = 16.sp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("48-Hour Soak Log (Hourly Checkpoints)", fontWeight = FontWeight.Bold, color = TextLight, fontSize = 16.sp)
+                            Text("Log-only mode must stay ON during soak testing. (needs owner verification)", color = TextMuted, fontSize = 12.sp)
+                        }
+                        Badge(containerColor = Success) {
+                            Text("LOG-ONLY ON", color = Color.White)
+                        }
+                    }
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -772,12 +872,8 @@ fun DiagnosticsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Log-Only Mode", color = TextLight, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                            Text(
-                                "Records notification shape & parser output to diagnostic table. Creates NO pending items or alarms.",
-                                color = TextMuted,
-                                fontSize = 12.sp
-                            )
+                            Text("Log-Only Mode Toggle", color = TextLight, fontSize = 14.sp)
+                            Text("Creates NO pending items or alarms while enabled.", color = TextMuted, fontSize = 12.sp)
                         }
                         Switch(
                             checked = isLogOnlyMode,
@@ -790,17 +886,62 @@ fun DiagnosticsScreen(
 
                     Divider(color = CardBorder)
 
-                    Text(
-                        "Export Anonymized Logs via Share Sheet",
-                        color = TextLight,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 14.sp
-                    )
-                    Text(
-                        "Phone numbers (+91...) and person names are masked as [PHONE_MASKED] and [PERSON_1]. Text structure and schedule terms remain intact.",
-                        color = TextMuted,
-                        fontSize = 12.sp
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Recorded Checkpoints: ${soakCheckpoints.size}/48", color = Accent, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                        Button(
+                            onClick = {
+                                coroutineScope.launch {
+                                    val cp = DiagnosticsManager.recordHourlyCheckpoint(context, "Manual Soak Checkpoint")
+                                    soakRecordMessage = "Hour #${cp.hourIndex} recorded (${if (cp.listenerConnected) "Connected" else "Down"})"
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Primary)
+                        ) {
+                            Text("+ Record Hourly Checkpoint", fontSize = 12.sp)
+                        }
+                    }
+
+                    if (soakRecordMessage != null) {
+                        Text(soakRecordMessage!!, color = Success, fontSize = 12.sp)
+                    }
+
+                    if (soakCheckpoints.isEmpty()) {
+                        Text("No hourly checkpoints recorded yet. Tap '+ Record Hourly Checkpoint' at each soak milestone. (needs owner verification)", color = TextMuted, fontSize = 12.sp)
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            soakCheckpoints.takeLast(5).reversed().forEach { cp ->
+                                Surface(
+                                    color = Color(0x33000000),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(10.dp).fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column {
+                                            Text("Hour #${cp.hourIndex} • ${cp.timestamp.take(16).replace("T", " ")}", fontWeight = FontWeight.Bold, color = TextLight, fontSize = 12.sp)
+                                            Text(
+                                                "Captured: ${cp.notificationsCapturedCount} msgs • Last: ${if (cp.lastNotificationTime != null) timeFormatter.format(Date(cp.lastNotificationTime)) else "None"}",
+                                                color = TextMuted,
+                                                fontSize = 11.sp
+                                            )
+                                        }
+                                        Badge(containerColor = if (cp.listenerConnected) Success else Danger) {
+                                            Text(if (cp.listenerConnected) "CONNECTED" else "DOWN", color = Color.White, fontSize = 10.sp)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Divider(color = CardBorder)
 
                     Button(
                         onClick = {
@@ -821,38 +962,12 @@ fun DiagnosticsScreen(
                         colors = ButtonDefaults.buttonColors(containerColor = Accent),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(if (isExporting) "Generating Anonymized Log..." else "Export Anonymized Log (Share Sheet)", color = Color.Black)
+                        Text(if (isExporting) "Generating Anonymized Log..." else "Export Anonymized Soak Log (Share Sheet)", color = Color.Black)
                     }
 
                     if (exportMessage != null) {
                         Text(exportMessage!!, color = Success, fontSize = 12.sp)
                     }
-                }
-            }
-        }
-
-        // 3. Samsung One UI OEM Guide
-        item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = CardBg),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.PhoneAndroid, contentDescription = null, tint = Primary)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Samsung One UI & OEM Background Persistence", fontWeight = FontWeight.Bold, color = TextLight)
-                    }
-                    Text(
-                        "1. Device Care -> Battery -> Background usage limits -> Add to 'Never sleeping apps'.\n" +
-                        "2. App Info -> Battery -> Select 'Unrestricted'.\n" +
-                        "3. Recent Apps screen -> Tap Schedule Assistant app icon -> Select 'Keep open' (Lock app).\n" +
-                        "4. Ensure 'Notification access' is active for Schedule Assistant.",
-                        color = TextMuted,
-                        fontSize = 12.sp,
-                        lineHeight = 18.sp
-                    )
                 }
             }
         }
@@ -869,4 +984,5 @@ fun SettingsScreen(
         onRequestNotificationPermission = onRequestNotificationPermission
     )
 }
+
 

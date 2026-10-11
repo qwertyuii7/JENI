@@ -69,3 +69,23 @@ data class DiagnosticLogEntity(
     val mode: String = "LOG_ONLY" // "LOG_ONLY" or "NORMAL"
 )
 
+@Entity(
+    tableName = "soak_checkpoints",
+    indices = [Index(value = ["timestamp"])]
+)
+data class SoakCheckpointEntity(
+    @PrimaryKey
+    val id: String,
+    @ColumnInfo(name = "hour_index")
+    val hourIndex: Int,
+    val timestamp: String,
+    @ColumnInfo(name = "listener_connected")
+    val listenerConnected: Boolean,
+    @ColumnInfo(name = "last_notification_time")
+    val lastNotificationTime: Long?,
+    @ColumnInfo(name = "notifications_captured_count")
+    val notificationsCapturedCount: Int,
+    @ColumnInfo(name = "is_log_only_mode")
+    val isLogOnlyMode: Boolean,
+    val notes: String? = null
+)

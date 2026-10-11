@@ -57,3 +57,25 @@ interface DiagnosticLogDao {
     suspend fun clearAllDiagnosticLogs()
 }
 
+@Dao
+interface SoakCheckpointDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSoakCheckpoint(checkpoint: SoakCheckpointEntity)
+
+    @Query("SELECT * FROM soak_checkpoints ORDER BY hour_index ASC")
+    fun getAllSoakCheckpointsFlow(): Flow<List<SoakCheckpointEntity>>
+
+    @Query("SELECT * FROM soak_checkpoints ORDER BY hour_index ASC")
+    suspend fun getAllSoakCheckpoints(): List<SoakCheckpointEntity>
+
+    @Query("SELECT * FROM soak_checkpoints ORDER BY hour_index DESC LIMIT 1")
+    suspend fun getLatestSoakCheckpoint(): SoakCheckpointEntity?
+
+    @Query("SELECT COUNT(*) FROM soak_checkpoints")
+    suspend fun getCheckpointCount(): Int
+
+    @Query("DELETE FROM soak_checkpoints")
+    suspend fun clearAllCheckpoints()
+}
+
+

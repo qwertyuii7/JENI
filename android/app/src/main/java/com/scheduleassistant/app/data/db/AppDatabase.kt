@@ -7,14 +7,15 @@ import androidx.room.RoomDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [SyncEventEntity::class, RawMessageEntity::class, DiagnosticLogEntity::class],
-    version = 2,
+    entities = [SyncEventEntity::class, RawMessageEntity::class, DiagnosticLogEntity::class, SoakCheckpointEntity::class],
+    version = 3,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun eventDao(): EventDao
     abstract fun rawMessageDao(): RawMessageDao
     abstract fun diagnosticLogDao(): DiagnosticLogDao
+    abstract fun soakCheckpointDao(): SoakCheckpointDao
 
     companion object {
         @Volatile
