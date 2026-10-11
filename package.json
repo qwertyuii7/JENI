@@ -1,0 +1,28 @@
+{
+  "name": "schedule-assistant-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "spec",
+    "core",
+    "laptop",
+    "relay"
+  ],
+  "scripts": {
+    "test": "npm run test --workspaces --if-present",
+    "test:fixtures": "npm run test:fixtures --workspace core",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "eslint . && prettier --check ."
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "eslint": "^9.16.0",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}
