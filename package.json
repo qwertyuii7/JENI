@@ -12,6 +12,8 @@
     "relay"
   ],
   "scripts": {
+    "start": "npm run start --workspace=@schedule-assistant/laptop",
+    "start:laptop": "npm run start --workspace=@schedule-assistant/laptop",
     "test": "npm run test --workspaces --if-present",
     "test:fixtures": "npm run test:fixtures --workspace core",
     "build": "npm run build --workspaces --if-present",

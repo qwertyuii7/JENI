@@ -6,6 +6,8 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
+    "start": "tsc && node dist/cli.js",
+    "dev": "tsc && node dist/cli.js",
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {

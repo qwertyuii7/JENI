@@ -611,8 +611,8 @@ export class LaptopServer {
   private port: number;
   private csrfToken: string;
 
-  constructor(db: EventDatabase, options: { port?: number; deviceId?: string } = {}) {
-    this.db = db;
+  constructor(db?: EventDatabase, options: { port?: number; deviceId?: string } = {}) {
+    this.db = db || new EventDatabase({ path: process.env.DB_PATH || 'schedule_laptop.db' });
     this.port = options.port || 3000;
     this.csrfToken = crypto.randomBytes(24).toString('hex');
     this.pipeline = new IngestionPipeline(this.db, { deviceId: options.deviceId || 'laptop-local' });
