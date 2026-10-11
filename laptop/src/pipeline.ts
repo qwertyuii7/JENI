@@ -3,7 +3,8 @@ import {
   parseScheduleMessage,
   prefilterMessage,
   ExtractionOutput,
-  SyncEvent
+  SyncEvent,
+  HybridLogicalClock
 } from '@schedule-assistant/core';
 import { EventDatabase } from './db/database.js';
 import { ProjectionEngine } from './db/projection.js';
@@ -29,11 +30,13 @@ export interface IngestionResult {
 export class IngestionPipeline {
   private db: EventDatabase;
   private defaultDeviceId: string;
+  private hlc: HybridLogicalClock;
   private onNotification?: NotificationCallback;
 
   constructor(db: EventDatabase, options: IngestionOptions = {}) {
     this.db = db;
     this.defaultDeviceId = options.deviceId || 'laptop-local';
+    this.hlc = new HybridLogicalClock(this.defaultDeviceId);
     this.onNotification = options.onNotification;
   }
 
@@ -41,10 +44,18 @@ export class IngestionPipeline {
     this.onNotification = cb;
   }
 
+  public getHlc(): HybridLogicalClock {
+    return this.hlc;
+  }
+
   public processMessage(rawText: string, options: IngestionOptions = {}): IngestionResult {
     const deviceId = options.deviceId || this.defaultDeviceId;
     const refNow = options.referenceNow || new Date().toISOString();
     const nowIso = new Date().toISOString();
+
+    // Store in prunable raw_messages table
+    const rawMessageId = `raw-${uuidv4()}`;
+    this.db.storeRawMessage(rawMessageId, rawText, nowIso);
 
     // 1. Flooding Check: Detect message flooding (> 3 schedule declarations)
     const eventCount = (rawText.match(/\b(class|meeting|lecture|sync|viva|test|quiz|lab|demo)\b/gi) || []).length;
@@ -54,11 +65,14 @@ export class IngestionPipeline {
         id: floodEventId,
         timestamp: nowIso,
         device_id: deviceId,
+        seq: this.db.getNextSeq(deviceId),
+        hlc: this.hlc.now(),
         type: 'event_dismissed',
         entity_id: `flood-${floodEventId}`,
         payload: {
           reason: 'flood_truncated',
           raw_text: rawText,
+          raw_message_id: rawMessageId,
           message: 'Message exceeded flood limit (capped at 3 events per notification)'
         }
       };
@@ -81,7 +95,6 @@ export class IngestionPipeline {
     // 2. Prefilter & Extraction
     const prefilter = prefilterMessage(rawText);
     if (!prefilter.shouldParse) {
-      // If rejected due to casual noise, ignore cleanly
       if (['empty_input', 'casual_chatter', 'otp_noise', 'price_noise', 'score_noise', 'pure_injection'].includes(prefilter.reason || '')) {
         return {
           status: 'REJECTED',
@@ -89,15 +102,18 @@ export class IngestionPipeline {
         };
       }
 
-      // If text had potential schedule intent but failed parsing, never fail silently
+      // If text had potential schedule intent but failed prefilter, emit parse_failed
       const failEvent: SyncEvent = {
         id: uuidv4(),
         timestamp: nowIso,
         device_id: deviceId,
+        seq: this.db.getNextSeq(deviceId),
+        hlc: this.hlc.now(),
         type: 'parse_failed',
         entity_id: `fail-${uuidv4()}`,
         payload: {
           raw_text: rawText,
+          raw_message_id: rawMessageId,
           reason: prefilter.reason || 'unresolved_prefilter'
         }
       };
@@ -124,10 +140,13 @@ export class IngestionPipeline {
         id: uuidv4(),
         timestamp: nowIso,
         device_id: deviceId,
+        seq: this.db.getNextSeq(deviceId),
+        hlc: this.hlc.now(),
         type: 'parse_failed',
         entity_id: `fail-${uuidv4()}`,
         payload: {
           raw_text: rawText,
+          raw_message_id: rawMessageId,
           reason: 'unresolved_rules'
         }
       };
@@ -154,7 +173,6 @@ export class IngestionPipeline {
       const { schedules } = ProjectionEngine.projectState(allEvents);
       const targetTitle = (extraction.target?.title || extraction.title).toLowerCase().trim();
 
-      // Find candidates by exact match, synonym match, or token overlap
       for (const sched of schedules.values()) {
         if (sched.status === 'DISMISSED' || sched.status === 'CANCELLED') continue;
         const schedTitle = sched.title.toLowerCase().trim();
@@ -178,14 +196,10 @@ export class IngestionPipeline {
           const originalTime = matched.start.split('T')[1];
           if (extraction.start_date) {
             extraction.start = `${extraction.start_date}T${originalTime}`;
-            extraction.time_unspecified = false; // Inherited time resolves it
+            extraction.time_unspecified = false;
           }
         }
-      } else if (candidates.length > 1) {
-        // Multi-match: flag as ambiguous and attach candidates
-        extraction.ambiguous = true;
       } else {
-        // Zero-match: flag as ambiguous and never drop silently
         extraction.ambiguous = true;
       }
     }
@@ -196,11 +210,14 @@ export class IngestionPipeline {
       id: uuidv4(),
       timestamp: nowIso,
       device_id: deviceId,
+      seq: this.db.getNextSeq(deviceId),
+      hlc: this.hlc.now(),
       type: 'event_extracted',
       entity_id: entityId,
       payload: {
         ...extraction,
         raw_text: rawText,
+        raw_message_id: rawMessageId,
         candidate_matches: candidates
       }
     };
@@ -233,6 +250,8 @@ export class IngestionPipeline {
       id: uuidv4(),
       timestamp: new Date().toISOString(),
       device_id: this.defaultDeviceId,
+      seq: this.db.getNextSeq(this.defaultDeviceId),
+      hlc: this.hlc.now(),
       type: 'event_confirmed',
       entity_id: entityId,
       payload
@@ -253,6 +272,8 @@ export class IngestionPipeline {
       id: uuidv4(),
       timestamp: new Date().toISOString(),
       device_id: this.defaultDeviceId,
+      seq: this.db.getNextSeq(this.defaultDeviceId),
+      hlc: this.hlc.now(),
       type: 'event_dismissed',
       entity_id: entityId,
       payload: {}

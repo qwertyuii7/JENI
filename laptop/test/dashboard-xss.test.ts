@@ -53,7 +53,8 @@ describe('Laptop Dashboard Security & XSS Suite', () => {
     const html = createDashboardHtml({
       schedules: maliciousSchedules,
       reminders: maliciousReminders,
-      events: maliciousEvents
+      events: maliciousEvents,
+      csrfToken: 'test-csrf-token'
     });
 
     // 1. Assert unescaped script tags DO NOT appear anywhere outside the fixed script blocks
@@ -84,7 +85,8 @@ describe('Laptop Dashboard Security & XSS Suite', () => {
     const html = createDashboardHtml({
       schedules,
       reminders: [],
-      events: []
+      events: [],
+      csrfToken: 'test-csrf-token'
     });
 
     // Navigation tabs

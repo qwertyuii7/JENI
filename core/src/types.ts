@@ -44,6 +44,8 @@ export const SyncEventSchema = z.object({
   id: z.string().uuid(),
   timestamp: z.string(),
   device_id: z.string().min(1),
+  seq: z.number().int().positive().default(1),
+  hlc: z.string().min(1),
   type: EventTypeSchema,
   entity_id: z.string(),
   payload: z.record(z.any())

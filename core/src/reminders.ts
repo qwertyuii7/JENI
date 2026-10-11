@@ -8,7 +8,8 @@ export interface GeneratedAlerts {
 
 export function generateAlertsForSchedule(
   schedule: ScheduleEntity,
-  deviceId: string
+  deviceId: string,
+  options: { seqStart?: number; hlc?: string } = {}
 ): GeneratedAlerts {
   // HARD INVARIANT: No reminder or alarm is created from a time_unspecified event
   // until an explicit time is confirmed
@@ -27,6 +28,8 @@ export function generateAlertsForSchedule(
   }
 
   const nowIso = new Date().toISOString();
+  const baseSeq = options.seqStart || 1;
+  const baseHlc = options.hlc || `${nowIso}_0001`;
 
   // Notification reminder 15 minutes before
   const reminderTimeMs = startTimeMs - 15 * 60 * 1000;
@@ -40,6 +43,8 @@ export function generateAlertsForSchedule(
     id: uuidv4(),
     timestamp: nowIso,
     device_id: deviceId,
+    seq: baseSeq,
+    hlc: baseHlc,
     type: 'reminder_created',
     entity_id: `rem-${schedule.id}`,
     payload: {
@@ -54,6 +59,8 @@ export function generateAlertsForSchedule(
     id: uuidv4(),
     timestamp: nowIso,
     device_id: deviceId,
+    seq: baseSeq + 1,
+    hlc: baseHlc,
     type: 'alarm_set',
     entity_id: `alarm-${schedule.id}`,
     payload: {

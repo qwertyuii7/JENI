@@ -1,9 +1,10 @@
 import http from 'node:http';
 import { URL } from 'node:url';
+import crypto from 'node:crypto';
 import { EventDatabase } from './db/database.js';
 import { ProjectionEngine } from './db/projection.js';
 import { IngestionPipeline } from './pipeline.js';
-import { LaptopScheduler } from './scheduler.js';
+import { LaptopScheduler, NotificationHealth } from './scheduler.js';
 
 export function escapeHtml(str: string): string {
   if (!str) return '';
@@ -19,16 +20,20 @@ export function createDashboardHtml(data: {
   schedules: any[];
   reminders: any[];
   events: any[];
+  csrfToken: string;
+  notificationHealth?: NotificationHealth;
 }): string {
   const pendingCount = data.schedules.filter(s => s.status === 'PENDING').length;
   const confirmedCount = data.schedules.filter(s => s.status === 'CONFIRMED').length;
   const alertsCount = data.reminders.filter(r => r.status === 'SCHEDULED').length;
+  const health = data.notificationHealth || { status: 'HEALTHY' };
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="csrf-token" content="${escapeHtml(data.csrfToken)}">
   <title>Schedule Assistant | Laptop Dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -69,6 +74,20 @@ export function createDashboardHtml(data: {
     .brand { display: flex; align-items: center; gap: 0.75rem; }
     .brand h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.02em; }
     
+    /* Health Banner */
+    .banner-failed {
+      background: rgba(239, 68, 68, 0.2);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      color: #fca5a5;
+      padding: 0.75rem 1.25rem;
+      border-radius: 0.75rem;
+      margin-bottom: 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-weight: 500;
+    }
+
     /* Navigation Bar */
     .nav-tabs {
       display: flex;
@@ -245,12 +264,21 @@ export function createDashboardHtml(data: {
     <header>
       <div class="brand">
         <h1>Schedule Assistant</h1>
-        <span class="badge badge-primary">Offline-First Engine</span>
+        <span class="badge badge-primary">Loopback 127.0.0.1</span>
       </div>
       <div>
-        <span class="badge badge-success">Local Service: Active</span>
+        <span class="badge ${health.status === 'HEALTHY' ? 'badge-success' : 'badge-danger'}">
+          Notification Service: ${escapeHtml(health.status)}
+        </span>
       </div>
     </header>
+
+    ${health.status === 'FAILED' ? `
+      <div class="banner-failed">
+        <span>⚠️ Notification Delivery Alert: ${escapeHtml(health.lastError || 'Delivery failure')}</span>
+        <button class="btn btn-sm btn-outline" onclick="testNotification()">Retry Health Check</button>
+      </div>
+    ` : ''}
 
     <!-- Navigation Tabs -->
     <nav class="nav-tabs">
@@ -289,7 +317,7 @@ export function createDashboardHtml(data: {
       <div class="card paste-box">
         <div class="card-title">
           <span>Ingestion Pipeline: Paste Message</span>
-          <span style="font-size: 0.8rem; color: var(--text-muted);">Strictly sanitized; never executes raw text</span>
+          <span style="font-size: 0.8rem; color: var(--text-muted);">Protected by CSRF & Host/Origin check</span>
         </div>
         <form id="msgForm" onsubmit="submitMessage(event)">
           <textarea id="rawInput" placeholder="Paste notification text here (e.g. 'kal 4 baje DBMS class hai', 'meeting Friday 11 pe shift ho gayi')..."></textarea>
@@ -312,7 +340,7 @@ export function createDashboardHtml(data: {
               <th>Event ID</th>
               <th>Type</th>
               <th>Entity ID</th>
-              <th>Timestamp</th>
+              <th>HLC Timestamp</th>
             </tr>
           </thead>
           <tbody>
@@ -321,7 +349,7 @@ export function createDashboardHtml(data: {
                 <td class="event-type">${escapeHtml(e.id.substring(0, 8))}...</td>
                 <td><span class="badge badge-primary">${escapeHtml(e.type)}</span></td>
                 <td class="event-type">${escapeHtml(e.entity_id)}</td>
-                <td style="color: var(--text-muted); font-size: 0.8rem;">${escapeHtml(e.timestamp)}</td>
+                <td style="color: var(--text-muted); font-size: 0.8rem;">${escapeHtml(e.hlc || e.timestamp)}</td>
               </tr>
             `).join('')}
           </tbody>
@@ -449,24 +477,31 @@ export function createDashboardHtml(data: {
         <div class="card-title">Laptop Assistant Configuration</div>
         <div style="display: flex; flex-direction: column; gap: 1rem; font-size: 0.95rem;">
           <div style="display: flex; justify-content: space-between; padding-bottom: 0.75rem; border-bottom: 1px solid var(--card-border);">
-            <span style="color: var(--text-muted);">Device Identifier</span>
-            <strong>laptop-local</strong>
+            <span style="color: var(--text-muted);">Listen Binding</span>
+            <strong>127.0.0.1 (Strict Local Loopback)</strong>
+          </div>
+          <div style="display: flex; justify-content: space-between; padding-bottom: 0.75rem; border-bottom: 1px solid var(--card-border);">
+            <span style="color: var(--text-muted);">Origin & CSRF Defense</span>
+            <span class="badge badge-success">Enforced on all POSTs</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; padding-bottom: 0.75rem; border-bottom: 1px solid var(--card-border);">
+            <span style="color: var(--text-muted);">Notification Service Health</span>
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <span class="badge ${health.status === 'HEALTHY' ? 'badge-success' : 'badge-danger'}">${escapeHtml(health.status)}</span>
+              <button class="btn btn-sm btn-outline" onclick="testNotification()">Test Delivery</button>
+            </div>
           </div>
           <div style="display: flex; justify-content: space-between; padding-bottom: 0.75rem; border-bottom: 1px solid var(--card-border);">
             <span style="color: var(--text-muted);">Active Timezone</span>
             <strong>Asia/Kolkata (+05:30)</strong>
           </div>
           <div style="display: flex; justify-content: space-between; padding-bottom: 0.75rem; border-bottom: 1px solid var(--card-border);">
-            <span style="color: var(--text-muted);">Database Engine</span>
-            <strong>SQLite (node:sqlite DatabaseSync)</strong>
+            <span style="color: var(--text-muted);">Ordering & Clock</span>
+            <span class="badge badge-primary">Hybrid Logical Clock (HLC) + seq</span>
           </div>
           <div style="display: flex; justify-content: space-between; padding-bottom: 0.75rem; border-bottom: 1px solid var(--card-border);">
-            <span style="color: var(--text-muted);">Append-Only Invariant</span>
-            <span class="badge badge-success">BEFORE UPDATE / DELETE Triggers Enforced</span>
-          </div>
-          <div style="display: flex; justify-content: space-between; padding-bottom: 0.75rem; border-bottom: 1px solid var(--card-border);">
-            <span style="color: var(--text-muted);">Hard Scheduling Invariant</span>
-            <span class="badge badge-success">time_unspecified / ambiguous blocked from alerts</span>
+            <span style="color: var(--text-muted);">Raw Messages Retention</span>
+            <strong>Prunable table (30 days default)</strong>
           </div>
           <div style="display: flex; justify-content: space-between;">
             <span style="color: var(--text-muted);">Total Synchronized Events</span>
@@ -479,6 +514,8 @@ export function createDashboardHtml(data: {
   </div>
 
   <script>
+    const CSRF_TOKEN = "${data.csrfToken}";
+
     function switchTab(tabId) {
       document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
       document.querySelectorAll('.nav-tab').forEach(el => el.classList.remove('active'));
@@ -498,7 +535,10 @@ export function createDashboardHtml(data: {
       if (!text) return;
       const res = await fetch('/api/messages', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-csrf-token': CSRF_TOKEN
+        },
         body: JSON.stringify({ text })
       });
       const data = await res.json();
@@ -506,14 +546,23 @@ export function createDashboardHtml(data: {
     }
 
     async function confirmItem(id) {
-      await fetch('/api/schedules/' + id + '/confirm', { method: 'POST' });
+      await fetch('/api/schedules/' + id + '/confirm', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-csrf-token': CSRF_TOKEN
+        }
+      });
       window.location.reload();
     }
 
     async function confirmWithTime(id, timeIso) {
       await fetch('/api/schedules/' + id + '/confirm', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-csrf-token': CSRF_TOKEN
+        },
         body: JSON.stringify({ timeOverride: timeIso })
       });
       window.location.reload();
@@ -527,7 +576,26 @@ export function createDashboardHtml(data: {
     }
 
     async function dismissItem(id) {
-      await fetch('/api/schedules/' + id + '/dismiss', { method: 'POST' });
+      await fetch('/api/schedules/' + id + '/dismiss', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-csrf-token': CSRF_TOKEN
+        }
+      });
+      window.location.reload();
+    }
+
+    async function testNotification() {
+      const res = await fetch('/api/notifications/test', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-csrf-token': CSRF_TOKEN
+        }
+      });
+      const json = await res.json();
+      alert(json.success ? 'Notification health check PASSED!' : 'Health check failed: ' + json.error);
       window.location.reload();
     }
   </script>
@@ -541,10 +609,12 @@ export class LaptopServer {
   private pipeline: IngestionPipeline;
   private scheduler: LaptopScheduler;
   private port: number;
+  private csrfToken: string;
 
   constructor(db: EventDatabase, options: { port?: number; deviceId?: string } = {}) {
     this.db = db;
     this.port = options.port || 3000;
+    this.csrfToken = crypto.randomBytes(24).toString('hex');
     this.pipeline = new IngestionPipeline(this.db, { deviceId: options.deviceId || 'laptop-local' });
     this.scheduler = new LaptopScheduler(this.db, options.deviceId || 'laptop-local');
     this.server = this.createServer();
@@ -562,12 +632,16 @@ export class LaptopServer {
     return this.db;
   }
 
+  public getCsrfToken(): string {
+    return this.csrfToken;
+  }
+
+  public getPort(): number {
+    return this.port;
+  }
+
   private createServer(): http.Server {
     return http.createServer(async (req, res) => {
-      const parsedUrl = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
-      const pathname = parsedUrl.pathname;
-      const method = req.method || 'GET';
-
       // Helper for JSON responses
       const sendJson = (statusCode: number, data: any) => {
         res.writeHead(statusCode, { 'Content-Type': 'application/json' });
@@ -589,13 +663,49 @@ export class LaptopServer {
         });
       };
 
+      // 1. Host Header Validation
+      const hostHeader = (req.headers.host || '').toLowerCase();
+      const validHosts = [
+        `127.0.0.1:${this.port}`,
+        `localhost:${this.port}`,
+        '127.0.0.1',
+        'localhost'
+      ];
+      if (!validHosts.includes(hostHeader)) {
+        return sendJson(403, { error: 'Invalid Host header' });
+      }
+
+      const parsedUrl = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+      const pathname = parsedUrl.pathname;
+      const method = req.method || 'GET';
+
+      // 2. CSRF & Origin Validation for all state-mutating requests (POST)
+      if (method === 'POST') {
+        // Origin validation (if Origin header present)
+        const origin = req.headers.origin;
+        if (origin) {
+          const allowedOrigins = [
+            `http://127.0.0.1:${this.port}`,
+            `http://localhost:${this.port}`
+          ];
+          if (!allowedOrigins.includes(origin)) {
+            return sendJson(403, { error: 'Cross-origin requests forbidden' });
+          }
+        }
+
+        // CSRF Token validation
+        const token = req.headers['x-csrf-token'];
+        if (!token || token !== this.csrfToken) {
+          return sendJson(403, { error: 'Invalid or missing CSRF token' });
+        }
+      }
+
       // API Routes
       if (pathname === '/api/messages' && method === 'POST') {
         const body = await parseBody();
         const result = this.pipeline.processMessage(body.text || '', {
           referenceNow: body.referenceNow
         });
-        // Run scheduler tick to update state
         this.scheduler.checkAndTick();
         return sendJson(200, result);
       }
@@ -614,6 +724,15 @@ export class LaptopServer {
         const entityId = parts[3];
         const success = this.pipeline.dismissSchedule(entityId);
         return sendJson(200, { success });
+      }
+
+      if (pathname === '/api/notifications/test' && method === 'POST') {
+        const testRes = this.scheduler.testNotification();
+        return sendJson(testRes.success ? 200 : 500, testRes);
+      }
+
+      if (pathname === '/api/notifications/health' && method === 'GET') {
+        return sendJson(200, this.scheduler.notificationHealth);
       }
 
       if (pathname === '/api/schedules' && method === 'GET') {
@@ -640,7 +759,9 @@ export class LaptopServer {
         const html = createDashboardHtml({
           schedules: Array.from(schedules.values()),
           reminders: Array.from(reminders.values()),
-          events
+          events,
+          csrfToken: this.csrfToken,
+          notificationHealth: this.scheduler.notificationHealth
         });
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         return res.end(html);
@@ -654,7 +775,8 @@ export class LaptopServer {
   public async start(): Promise<void> {
     this.scheduler.start();
     return new Promise((resolve) => {
-      this.server.listen(this.port, () => {
+      // Strictly bind to local loopback 127.0.0.1
+      this.server.listen(this.port, '127.0.0.1', () => {
         resolve();
       });
     });

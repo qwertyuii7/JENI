@@ -2,21 +2,30 @@ import { v4 as uuidv4 } from 'uuid';
 import {
   generateAlertsForSchedule,
   isReminderSuppressed,
-  SyncEvent
+  SyncEvent,
+  HybridLogicalClock
 } from '@schedule-assistant/core';
 import { EventDatabase } from './db/database.js';
 import { ProjectionEngine, ProjectedSchedule, ProjectedReminder } from './db/projection.js';
 
 export interface AlertDispatcher {
-  (alert: { title: string; message: string; type: 'notification' | 'alarm' }): void;
+  (alert: { title: string; message: string; type: 'notification' | 'alarm'; isMissed?: boolean }): void;
+}
+
+export interface NotificationHealth {
+  status: 'HEALTHY' | 'FAILED';
+  lastError?: string;
+  lastCheckedAt?: string;
 }
 
 export class LaptopScheduler {
   private db: EventDatabase;
   private deviceId: string;
   private dispatcher: AlertDispatcher;
+  private hlc: HybridLogicalClock;
   private intervalTimer: NodeJS.Timeout | null = null;
   private isRunning: boolean = false;
+  public notificationHealth: NotificationHealth = { status: 'HEALTHY' };
 
   constructor(
     db: EventDatabase,
@@ -25,6 +34,7 @@ export class LaptopScheduler {
   ) {
     this.db = db;
     this.deviceId = deviceId;
+    this.hlc = new HybridLogicalClock(this.deviceId);
     this.dispatcher = dispatcher || ((alert) => {
       console.log(`[DESKTOP ALERT] [${alert.type.toUpperCase()}] ${alert.title}: ${alert.message}`);
     });
@@ -34,15 +44,39 @@ export class LaptopScheduler {
     this.dispatcher = dispatcher;
   }
 
+  public testNotification(): { success: boolean; error?: string } {
+    try {
+      this.dispatcher({
+        title: 'Health Check: Schedule Assistant',
+        message: 'Notification system is fully active and functional.',
+        type: 'notification'
+      });
+      this.notificationHealth = {
+        status: 'HEALTHY',
+        lastCheckedAt: new Date().toISOString()
+      };
+      return { success: true };
+    } catch (err: any) {
+      this.notificationHealth = {
+        status: 'FAILED',
+        lastError: err.message || 'Notification dispatch failed',
+        lastCheckedAt: new Date().toISOString()
+      };
+      return { success: false, error: this.notificationHealth.lastError };
+    }
+  }
+
   public checkAndTick(currentTimestampMs: number = Date.now()): {
     newRemindersCreated: number;
     remindersFired: number;
+    missedFired: number;
   } {
     const allEvents = this.db.getAllEvents();
     const { schedules, reminders } = ProjectionEngine.projectState(allEvents);
 
     let newRemindersCreated = 0;
     let remindersFired = 0;
+    let missedFired = 0;
 
     // 1. Generate Alerts for Confirmed Schedules
     for (const schedule of schedules.values()) {
@@ -60,7 +94,11 @@ export class LaptopScheduler {
       );
 
       if (!hasReminder) {
-        const alerts = generateAlertsForSchedule(schedule, this.deviceId);
+        const nextSeq = this.db.getNextSeq(this.deviceId);
+        const alerts = generateAlertsForSchedule(schedule, this.deviceId, {
+          seqStart: nextSeq,
+          hlc: this.hlc.now(currentTimestampMs)
+        });
         if (alerts.reminderEvent) {
           this.db.insertEvent(alerts.reminderEvent);
           newRemindersCreated++;
@@ -72,7 +110,7 @@ export class LaptopScheduler {
       }
     }
 
-    // 2. Evaluate and Fire Due Reminders & Alarms
+    // 2. Evaluate and Fire Due Reminders & Alarms (with Startup Catch-up & Exactly-Once-ish Firing)
     const updatedEvents = this.db.getAllEvents();
     const { reminders: currentReminders } = ProjectionEngine.projectState(updatedEvents);
 
@@ -86,11 +124,37 @@ export class LaptopScheduler {
           continue;
         }
 
-        // Fire reminder: insert immutable reminder_fired event
+        // Idempotency key per reminder
+        const idempotencyKey = `fire-${reminder.id}-${reminder.trigger_time}`;
+
+        // Startup catch-up check: was the trigger time missed during downtime? (> 60s ago)
+        const isMissed = (currentTimestampMs - triggerMs) > 60_000;
+        let alertTitle = '';
+
+        if (isMissed) {
+          const missedTimeFormatted = new Date(triggerMs).toLocaleTimeString('en-IN', {
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true,
+            timeZone: 'Asia/Kolkata'
+          });
+          alertTitle = reminder.type === 'alarm'
+            ? `⏰ ALARM (missed at ${missedTimeFormatted}): ${reminder.title}`
+            : `🔔 Reminder (missed at ${missedTimeFormatted}): ${reminder.title}`;
+          missedFired++;
+        } else {
+          alertTitle = reminder.type === 'alarm'
+            ? `⏰ ALARM: ${reminder.title}`
+            : `🔔 Reminder: ${reminder.title}`;
+        }
+
+        // Write reminder_fired event atomically with delivery intent BEFORE dispatch
         const firedEvent: SyncEvent = {
           id: uuidv4(),
           timestamp: new Date().toISOString(),
           device_id: this.deviceId,
+          seq: this.db.getNextSeq(this.deviceId),
+          hlc: this.hlc.now(currentTimestampMs),
           type: 'reminder_fired',
           entity_id: reminder.id,
           payload: {
@@ -98,25 +162,47 @@ export class LaptopScheduler {
             title: reminder.title,
             type: reminder.type,
             trigger_time: reminder.trigger_time,
+            idempotency_key: idempotencyKey,
+            missed: isMissed,
             fired_at: new Date().toISOString()
           }
         };
 
-        this.db.insertEvent(firedEvent);
+        const inserted = this.db.insertEvent(firedEvent);
+        if (!inserted) {
+          // Deduplicated by SQLite store
+          continue;
+        }
+
         remindersFired++;
 
         // Dispatch desktop notification
-        this.dispatcher({
-          title: reminder.type === 'alarm' ? `⏰ ALARM: ${reminder.title}` : `🔔 Reminder: ${reminder.title}`,
-          message: `Scheduled alert for ${reminder.title}`,
-          type: reminder.type
-        });
+        try {
+          this.dispatcher({
+            title: alertTitle,
+            message: isMissed ? `Missed scheduled alert for ${reminder.title}` : `Scheduled alert for ${reminder.title}`,
+            type: reminder.type,
+            isMissed
+          });
+          this.notificationHealth = {
+            status: 'HEALTHY',
+            lastCheckedAt: new Date().toISOString()
+          };
+        } catch (err: any) {
+          this.notificationHealth = {
+            status: 'FAILED',
+            lastError: err.message || 'Notification dispatch failed',
+            lastCheckedAt: new Date().toISOString()
+          };
+          console.error('[SCHEDULER] Dispatch failed:', err);
+        }
       }
     }
 
     return {
       newRemindersCreated,
-      remindersFired
+      remindersFired,
+      missedFired
     };
   }
 

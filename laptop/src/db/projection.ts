@@ -22,7 +22,28 @@ export class ProjectionEngine {
     const schedules = new Map<string, ProjectedSchedule>();
     const reminders = new Map<string, ProjectedReminder>();
 
+    // Deduplicate by event.id
+    const seenIds = new Set<string>();
+    const deduplicated: SyncEvent[] = [];
     for (const ev of events) {
+      if (!seenIds.has(ev.id)) {
+        seenIds.add(ev.id);
+        deduplicated.push(ev);
+      }
+    }
+
+    // Sort deterministically: HLC ASC then device_id ASC
+    deduplicated.sort((a, b) => {
+      const hlcA = a.hlc || a.timestamp || '';
+      const hlcB = b.hlc || b.timestamp || '';
+      if (hlcA < hlcB) return -1;
+      if (hlcA > hlcB) return 1;
+      if (a.device_id < b.device_id) return -1;
+      if (a.device_id > b.device_id) return 1;
+      return 0;
+    });
+
+    for (const ev of deduplicated) {
       switch (ev.type) {
         case 'event_extracted': {
           const payload = ev.payload as ExtractionOutput & { raw_text?: string; candidate_matches?: any[] };

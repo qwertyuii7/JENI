@@ -28,6 +28,8 @@ describe('Spec Schema & Fixtures Validation', () => {
       id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
       timestamp: '2026-10-12T10:00:00+05:30',
       device_id: 'phone-pixel8',
+      seq: 1,
+      hlc: '2026-10-12T10:00:00.000Z_0001',
       type: 'event_extracted',
       entity_id: 'sched-123',
       payload: {

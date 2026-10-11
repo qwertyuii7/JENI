@@ -4,7 +4,7 @@
   "title": "SyncEvent",
   "description": "Immutable append-only sync event across Android and Laptop",
   "type": "object",
-  "required": ["id", "timestamp", "device_id", "type", "entity_id", "payload"],
+  "required": ["id", "timestamp", "device_id", "seq", "hlc", "type", "entity_id", "payload"],
   "properties": {
     "id": {
       "type": "string",
@@ -20,6 +20,15 @@
       "type": "string",
       "minLength": 1,
       "description": "Originating device ID (e.g. android-xyz, laptop-abc)"
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonically increasing per-device sequence counter"
+    },
+    "hlc": {
+      "type": "string",
+      "description": "Hybrid Logical Clock timestamp string (ISO_counter)"
     },
     "type": {
       "type": "string",
