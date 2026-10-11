@@ -83,6 +83,26 @@ object ProjectionEngine {
                     }
                 }
 
+                "event_cancelled" -> {
+                    val s = schedules[ev.entity_id]
+                    if (s != null) {
+                        s.status = ScheduleStatus.CANCELLED
+                        s.updated_at = ev.timestamp
+                    }
+                }
+
+                "event_rescheduled" -> {
+                    val s = schedules[ev.entity_id]
+                    if (s != null) {
+                        val newStart = ev.payload["start"] as? String
+                        if (newStart != null) {
+                            s.start = newStart
+                            s.time_unspecified = false
+                        }
+                        s.updated_at = ev.timestamp
+                    }
+                }
+
                 "reminder_created", "alarm_set" -> {
                     val triggerTime = ev.payload["trigger_time"] as? String ?: ""
                     val title = ev.payload["title"] as? String ?: ""

@@ -2,6 +2,7 @@ package com.scheduleassistant.app.data.diagnostics
 
 import android.app.ActivityManager
 import android.app.ApplicationExitInfo
+import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
@@ -36,8 +37,35 @@ object DiagnosticsManager {
     private const val KEY_LAST_BOOT_RECOVERY_TIME = "last_boot_recovery_time"
     private const val KEY_LOG_ONLY_MODE = "log_only_mode"
     private const val KEY_ALLOWED_PACKAGES = "allowed_packages"
+    private const val KEY_REMINDER_LEAD_MINUTES = "reminder_lead_minutes"
+    private const val KEY_ALARM_LEAD_MINUTES = "alarm_lead_minutes"
 
     val DEFAULT_ALLOWED_PACKAGES = setOf("com.whatsapp", "com.whatsapp.w4b")
+
+    fun getReminderLeadTimeMinutes(context: Context): Int {
+        return getPrefs(context).getInt(KEY_REMINDER_LEAD_MINUTES, 15)
+    }
+
+    fun setReminderLeadTimeMinutes(context: Context, minutes: Int) {
+        getPrefs(context).edit().putInt(KEY_REMINDER_LEAD_MINUTES, minutes).apply()
+    }
+
+    fun getAlarmLeadTimeMinutes(context: Context): Int {
+        return getPrefs(context).getInt(KEY_ALARM_LEAD_MINUTES, 0)
+    }
+
+    fun setAlarmLeadTimeMinutes(context: Context, minutes: Int) {
+        getPrefs(context).edit().putInt(KEY_ALARM_LEAD_MINUTES, minutes).apply()
+    }
+
+    fun canUseFullScreenIntent(context: Context): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            nm?.canUseFullScreenIntent() ?: true
+        } else {
+            true
+        }
+    }
 
     private val _isListenerConnected = MutableStateFlow(false)
     val isListenerConnected: StateFlow<Boolean> = _isListenerConnected.asStateFlow()

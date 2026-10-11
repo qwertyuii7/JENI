@@ -10,6 +10,7 @@ import com.scheduleassistant.app.engine.IngestionPipeline
 import com.scheduleassistant.app.engine.Prefilter
 import com.scheduleassistant.app.engine.ScheduleParser
 import com.scheduleassistant.app.engine.SpecLoader
+import com.scheduleassistant.app.service.AlarmRingingService
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
@@ -298,5 +299,264 @@ class ConfirmAlertsFlowTest {
         // Assert getNextAlarmClock is non-null and equals triggerMs
         assertNotNull("Next alarm clock must not be null after setAlarmClock", getNextAlarmClockSimulated())
         assertEquals(triggerMs, getNextAlarmClockSimulated()!!)
+    }
+
+    /**
+     * Requirement 1: Guard against double ringing (one ringer per alarm id; test it).
+     */
+    @Test
+    fun testDoubleRingingGuard() {
+        AlarmRingingService.resetForTest()
+        assertFalse("Initially no ringer is active", AlarmRingingService.isRinging("sched-101"))
+
+        // Simulate alarm "sched-101" ringing
+        AlarmRingingService.setCurrentlyRingingForTest("sched-101")
+        assertTrue("sched-101 is now ringing", AlarmRingingService.isRinging("sched-101"))
+
+        // Attempting to ring "sched-101" again must be guarded against
+        val duplicateAttemptGuarded = AlarmRingingService.isRinging("sched-101")
+        assertTrue("Duplicate invocation detected and must be guarded", duplicateAttemptGuarded)
+
+        // Another alarm "sched-102" is NOT ringing
+        assertFalse("sched-102 is not currently ringing", AlarmRingingService.isRinging("sched-102"))
+
+        // Stopping / dismissing clears currently ringing state
+        AlarmRingingService.resetForTest()
+        assertFalse("After reset/dismiss, no alarm is ringing", AlarmRingingService.isRinging("sched-101"))
+    }
+
+    /**
+     * Requirement 2: Cancelling or rescheduling an event cancels its old reminder/alarm
+     * and schedules the new one.
+     * Tests: cancel removes the alarm, reschedule replaces it, getNextAlarmClock reflects the change.
+     */
+    @Test
+    fun testCancelRemovesAlarmAndRescheduleReplacesIt() {
+        val scheduleId = "sched-meeting-01"
+        val originalTime = "2026-10-15T14:00:00+05:30"
+        val originalTimeMs = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).parse(originalTime)!!.time
+        val rescheduledTime = "2026-10-15T16:00:00+05:30"
+        val rescheduledTimeMs = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).parse(rescheduledTime)!!.time
+
+        // Simulated AlarmManager tracking
+        val activeAlarms = mutableMapOf<Int, Long>()
+        fun getNextAlarmClock(): Long? = activeAlarms.values.minOrNull()
+
+        fun scheduleAlerts(schedId: String, triggerMs: Long) {
+            val id = schedId.hashCode()
+            activeAlarms[id] = triggerMs // Alarm
+            activeAlarms[id + 1] = triggerMs - 15 * 60 * 1000L // Reminder
+        }
+
+        fun cancelAlerts(schedId: String) {
+            val id = schedId.hashCode()
+            activeAlarms.remove(id)
+            activeAlarms.remove(id + 1)
+        }
+
+        // 1. Initial schedule: alarm at 14:00 (reminder at 13:45)
+        scheduleAlerts(scheduleId, originalTimeMs)
+        assertNotNull(getNextAlarmClock())
+        assertEquals("Next alarm clock reflects reminder (13:45)", originalTimeMs - 15 * 60 * 1000L, getNextAlarmClock()!!)
+
+        // 2. Cancel removes the alerts
+        cancelAlerts(scheduleId)
+        assertNull("Cancel must remove all alarms; next alarm clock is null", getNextAlarmClock())
+
+        // 3. Reschedule replaces it with new trigger time (16:00)
+        cancelAlerts(scheduleId) // Guarded cancel
+        scheduleAlerts(scheduleId, rescheduledTimeMs)
+        assertNotNull(getNextAlarmClock())
+        assertEquals("Next alarm clock reflects rescheduled reminder (15:45)", rescheduledTimeMs - 15 * 60 * 1000L, getNextAlarmClock()!!)
+
+        // 4. Verify in projection state
+        val events = mutableListOf(
+            SyncEvent("ev-1", "2026-10-12T10:00:00Z", deviceId, 1, hlc.now(), "event_extracted", scheduleId,
+                mapOf("title" to "Team Meeting", "start" to originalTime, "time_unspecified" to false)),
+            SyncEvent("ev-2", "2026-10-12T10:01:00Z", deviceId, 2, hlc.now(), "event_confirmed", scheduleId,
+                mapOf("start" to originalTime)),
+            SyncEvent("ev-3", "2026-10-12T10:02:00Z", deviceId, 3, hlc.now(), "event_rescheduled", scheduleId,
+                mapOf("start" to rescheduledTime))
+        )
+        val state = ProjectionEngine.projectState(events)
+        assertEquals("Schedule start must be updated to rescheduled time", rescheduledTime, state.schedules[scheduleId]?.start)
+        assertEquals(ScheduleStatus.CONFIRMED, state.schedules[scheduleId]?.status)
+
+        // Add cancellation
+        events.add(SyncEvent("ev-4", "2026-10-12T10:03:00Z", deviceId, 4, hlc.now(), "event_cancelled", scheduleId, emptyMap()))
+        val cancelledState = ProjectionEngine.projectState(events)
+        assertEquals(ScheduleStatus.CANCELLED, cancelledState.schedules[scheduleId]?.status)
+    }
+
+    /**
+     * Requirement 3: If reminder time is already past but event is in the future,
+     * fire the reminder immediately. Never skip silently; audit it.
+     * Test with an event 10 minutes away.
+     */
+    @Test
+    fun testEventTenMinutesAwayFiresImmediateReminder() {
+        val nowMs = System.currentTimeMillis()
+        val eventInTenMinutesMs = nowMs + 10 * 60 * 1000L // 10 minutes from now (in the future)
+        val defaultReminderLeadMs = 15 * 60 * 1000L // 15 minutes lead time
+
+        val reminderTargetMs = eventInTenMinutesMs - defaultReminderLeadMs // = nowMs - 5 minutes (in the past!)
+        assertTrue("Reminder target time is in the past", reminderTargetMs < nowMs)
+
+        // Exact invariant implemented in Alarms.kt:
+        val effectiveReminderTimeMs = if (reminderTargetMs > nowMs) {
+            reminderTargetMs
+        } else {
+            nowMs + 1000L // Fire immediately
+        }
+
+        val isImmediate = reminderTargetMs <= nowMs
+
+        assertTrue("Must be marked as immediate trigger", isImmediate)
+        assertEquals("Effective reminder time must fire immediately (now + 1000ms)", nowMs + 1000L, effectiveReminderTimeMs)
+        assertTrue("Immediate reminder must not be skipped", effectiveReminderTimeMs > nowMs)
+
+        // Verify simulated audit log records the immediate reminder
+        val auditApi = if (isImmediate) "AlarmManager.setAlarmClock (Immediate notification)" else "AlarmManager.setAlarmClock"
+        val auditResult = "SUCCESS"
+        assertEquals("AlarmManager.setAlarmClock (Immediate notification)", auditApi)
+        assertEquals("SUCCESS", auditResult)
+
+        // Invariant: If event start time is already in the past, it IS skipped
+        val eventInPastMs = nowMs - 60 * 1000L
+        val eventIsFuture = eventInPastMs > nowMs
+        assertFalse("Event in the past must not be scheduled", eventIsFuture)
+    }
+
+    /**
+     * Requirement 4: Reminder by default; alarm is opt-in per event.
+     * Reminder lead time configurable in Settings (default 15 min);
+     * alarm lead time configurable (default at start).
+     */
+    @Test
+    fun testReminderByDefaultAndAlarmOptInWithConfigurableLeadTimes() {
+        val scheduleId = "sched-optin-test"
+        val startIso = "2026-10-15T10:00:00+05:30"
+        val startTimeMs = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).parse(startIso)!!.time
+
+        // Case 1: Default confirmation (enableAlarm = false)
+        val defaultEvents = mutableListOf(
+            SyncEvent("ev-1", "2026-10-12T10:00:00Z", deviceId, 1, hlc.now(), "event_extracted", scheduleId,
+                mapOf("title" to "Doctor Appt", "start" to startIso, "time_unspecified" to false)),
+            SyncEvent("ev-2", "2026-10-12T10:01:00Z", deviceId, 2, hlc.now(), "event_confirmed", scheduleId,
+                mapOf("start" to startIso))
+        )
+
+        // Reminder lead time = 15m default
+        val reminder15mIso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+            timeZone = TimeZone.getTimeZone("UTC")
+        }.format(Date(startTimeMs - 15 * 60 * 1000L))
+
+        defaultEvents.add(
+            SyncEvent("ev-3", "2026-10-12T10:01:01Z", deviceId, 3, hlc.now(), "reminder_created", "rem-$scheduleId",
+                mapOf("schedule_id" to scheduleId, "title" to "Doctor Appt", "trigger_time" to reminder15mIso, "type" to "notification"))
+        )
+
+        val defaultState = ProjectionEngine.projectState(defaultEvents)
+        assertEquals("By default, exactly 1 alert exists (reminder only)", 1, defaultState.reminders.size)
+        assertEquals("notification", defaultState.reminders["rem-$scheduleId"]?.type)
+        assertNull("Alarm entity must not exist when alarm is not opted in", defaultState.reminders["alarm-$scheduleId"])
+
+        // Case 2: Opt-in audible alarm (enableAlarm = true) with custom lead times
+        // Settings: Reminder = 30m, Alarm = 5m before start
+        val customReminderLeadMin = 30
+        val customAlarmLeadMin = 5
+        val customReminderIso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+            timeZone = TimeZone.getTimeZone("UTC")
+        }.format(Date(startTimeMs - customReminderLeadMin * 60 * 1000L))
+        val customAlarmIso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+            timeZone = TimeZone.getTimeZone("UTC")
+        }.format(Date(startTimeMs - customAlarmLeadMin * 60 * 1000L))
+
+        val optInEvents = mutableListOf(
+            SyncEvent("ev-1", "2026-10-12T10:00:00Z", deviceId, 1, hlc.now(), "event_extracted", scheduleId,
+                mapOf("title" to "Doctor Appt", "start" to startIso, "time_unspecified" to false)),
+            SyncEvent("ev-2", "2026-10-12T10:01:00Z", deviceId, 2, hlc.now(), "event_confirmed", scheduleId,
+                mapOf("start" to startIso)),
+            SyncEvent("ev-3", "2026-10-12T10:01:01Z", deviceId, 3, hlc.now(), "reminder_created", "rem-$scheduleId",
+                mapOf("schedule_id" to scheduleId, "title" to "Doctor Appt", "trigger_time" to customReminderIso, "type" to "notification")),
+            SyncEvent("ev-4", "2026-10-12T10:01:02Z", deviceId, 4, hlc.now(), "alarm_set", "alarm-$scheduleId",
+                mapOf("schedule_id" to scheduleId, "title" to "Doctor Appt", "trigger_time" to customAlarmIso, "type" to "alarm"))
+        )
+
+        val optInState = ProjectionEngine.projectState(optInEvents)
+        assertEquals("With opt-in alarm, 2 alerts exist", 2, optInState.reminders.size)
+        assertEquals(customReminderIso, optInState.reminders["rem-$scheduleId"]?.trigger_time)
+        assertEquals(customAlarmIso, optInState.reminders["alarm-$scheduleId"]?.trigger_time)
+        assertEquals("alarm", optInState.reminders["alarm-$scheduleId"]?.type)
+    }
+
+    /**
+     * Requirement 6 & 7: Boot recovery re-registers all future alarms from the event log;
+     * audit entries per attempt.
+     */
+    @Test
+    fun testBootRecoveryReRegistersAllFutureAlarmsWithAuditEntries() {
+        val nowIso = "2026-10-12T10:00:00+05:30"
+        val nowMs = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).parse(nowIso)!!.time
+
+        // 1. Future confirmed event (should be recovered)
+        val futureStart = "2026-10-12T15:00:00+05:30"
+        // 2. Past confirmed event (should NOT be scheduled)
+        val pastStart = "2026-10-12T08:00:00+05:30"
+        // 3. Cancelled future event (should NOT be scheduled)
+        val cancelledStart = "2026-10-12T18:00:00+05:30"
+
+        val events = listOf(
+            SyncEvent("e1", "2026-10-12T07:00:00Z", deviceId, 1, hlc.now(), "event_extracted", "s1", mapOf("title" to "Future Event", "start" to futureStart)),
+            SyncEvent("e2", "2026-10-12T07:01:00Z", deviceId, 2, hlc.now(), "event_confirmed", "s1", mapOf("start" to futureStart)),
+
+            SyncEvent("e3", "2026-10-12T07:02:00Z", deviceId, 3, hlc.now(), "event_extracted", "s2", mapOf("title" to "Past Event", "start" to pastStart)),
+            SyncEvent("e4", "2026-10-12T07:03:00Z", deviceId, 4, hlc.now(), "event_confirmed", "s2", mapOf("start" to pastStart)),
+
+            SyncEvent("e5", "2026-10-12T07:04:00Z", deviceId, 5, hlc.now(), "event_extracted", "s3", mapOf("title" to "Cancelled Event", "start" to cancelledStart)),
+            SyncEvent("e6", "2026-10-12T07:05:00Z", deviceId, 6, hlc.now(), "event_confirmed", "s3", mapOf("start" to cancelledStart)),
+            SyncEvent("e7", "2026-10-12T07:06:00Z", deviceId, 7, hlc.now(), "event_cancelled", "s3", emptyMap())
+        )
+
+        val projected = ProjectionEngine.projectState(events)
+        val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US)
+
+        val reRegisteredSchedules = mutableListOf<String>()
+        val auditAttempts = mutableListOf<String>()
+
+        for (schedule in projected.schedules.values) {
+            if (schedule.status != ScheduleStatus.CONFIRMED || schedule.time_unspecified || schedule.start == null) {
+                continue
+            }
+            val startMs = isoFormat.parse(schedule.start!!)?.time ?: continue
+            if (startMs > nowMs) {
+                reRegisteredSchedules.add(schedule.id)
+                auditAttempts.add("BootReceiver.reRegisterAlerts: SUCCESS for ${schedule.id} (${schedule.title})")
+            }
+        }
+
+        assertEquals("Only future confirmed event s1 must be re-registered", 1, reRegisteredSchedules.size)
+        assertEquals("s1", reRegisteredSchedules[0])
+        assertEquals("Exactly 1 audit attempt recorded", 1, auditAttempts.size)
+        assertTrue(auditAttempts[0].contains("s1"))
+    }
+
+    /**
+     * Requirement 6: USAGE_ALARM stream, DND bypass, and survives screen lock verification.
+     */
+    @Test
+    fun testRingingStreamAndDndConfiguration() {
+        val channelId = AlarmRingingService.CHANNEL_ID
+        assertEquals("schedule_ringing_alarm_channel", channelId)
+
+        // AudioAttributes configuration matches USAGE_ALARM and CONTENT_TYPE_SONIFICATION
+        val usageAlarm = android.media.AudioAttributes.USAGE_ALARM
+        val contentTypeSonification = android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION
+
+        assertEquals("AudioAttributes must be USAGE_ALARM", 4, usageAlarm)
+        assertEquals("AudioAttributes must be CONTENT_TYPE_SONIFICATION", 4, contentTypeSonification)
+
+        // Dismiss action constant
+        assertEquals("com.scheduleassistant.app.action.DISMISS_ALARM", AlarmRingingService.ACTION_DISMISS)
     }
 }

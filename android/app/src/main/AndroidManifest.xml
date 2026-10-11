@@ -9,10 +9,8 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
-    <!-- Exact Alarms via AlarmManager.setAlarmClock & System Clock App -->
-    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
+    <!-- Exact Alarms via AlarmManager.setAlarmClock -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
-    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
     <application

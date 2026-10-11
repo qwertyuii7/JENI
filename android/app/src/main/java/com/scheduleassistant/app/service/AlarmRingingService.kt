@@ -24,6 +24,7 @@ class AlarmRingingService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var ringtone: Ringtone? = null
     private var vibrator: Vibrator? = null
+    private var currentScheduleId: String = ""
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -39,9 +40,27 @@ class AlarmRingingService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_DISMISS) {
+            stopAlarm()
+            synchronized(ringerLock) {
+                currentlyRingingId = null
+            }
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
         val title = intent?.getStringExtra("EXTRA_TITLE") ?: "Scheduled Alarm"
         val scheduleId = intent?.getStringExtra("EXTRA_SCHEDULE_ID") ?: ""
         val isTest = intent?.getBooleanExtra("EXTRA_IS_TEST", false) ?: false
+
+        // Guard against double ringing (Requirement 1: one ringer per alarm id)
+        synchronized(ringerLock) {
+            if (currentlyRingingId == scheduleId && ringtone != null) {
+                return START_NOT_STICKY // Guard: Already ringing for this alarm id
+            }
+            currentlyRingingId = scheduleId
+        }
+        currentScheduleId = scheduleId
 
         createChannel()
 
@@ -81,12 +100,6 @@ class AlarmRingingService : Service() {
             .build()
 
         startForeground(NOTIFICATION_ID, notification)
-
-        if (intent?.action == ACTION_DISMISS) {
-            stopAlarm()
-            stopSelf()
-            return START_NOT_STICKY
-        }
 
         playAlarmAudio()
         startVibration()
@@ -170,5 +183,39 @@ class AlarmRingingService : Service() {
         const val CHANNEL_ID = "schedule_ringing_alarm_channel"
         const val NOTIFICATION_ID = 9001
         const val ACTION_DISMISS = "com.scheduleassistant.app.action.DISMISS_ALARM"
+
+        @Volatile
+        var currentlyRingingId: String? = null
+            private set
+
+        val ringerLock = Any()
+
+        fun isRinging(alarmId: String): Boolean = synchronized(ringerLock) {
+            currentlyRingingId == alarmId
+        }
+
+        fun stopRinging(context: Context, alarmId: String? = null) {
+            synchronized(ringerLock) {
+                if (alarmId == null || currentlyRingingId == alarmId) {
+                    currentlyRingingId = null
+                    val stopIntent = Intent(context, AlarmRingingService::class.java).apply {
+                        action = ACTION_DISMISS
+                    }
+                    context.startService(stopIntent)
+                }
+            }
+        }
+
+        fun resetForTest() {
+            synchronized(ringerLock) {
+                currentlyRingingId = null
+            }
+        }
+
+        fun setCurrentlyRingingForTest(alarmId: String?) {
+            synchronized(ringerLock) {
+                currentlyRingingId = alarmId
+            }
+        }
     }
 }

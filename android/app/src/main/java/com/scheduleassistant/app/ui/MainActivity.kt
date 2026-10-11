@@ -233,8 +233,8 @@ class MainActivity : ComponentActivity() {
                     )
                     AppTab.PENDING -> PendingScreen(
                         schedules = schedules,
-                        onConfirm = { id, customTime ->
-                            handleConfirmSchedule(id, customTime, projectedState)
+                        onConfirm = { id, customTime, enableAlarm ->
+                            handleConfirmSchedule(id, customTime, enableAlarm, projectedState)
                         },
                         onDismiss = { id ->
                             handleDismissSchedule(id)
@@ -270,6 +270,7 @@ class MainActivity : ComponentActivity() {
     private fun handleConfirmSchedule(
         id: String,
         customTime: String?,
+        enableAlarm: Boolean,
         projectedState: com.scheduleassistant.app.data.projection.ProjectedState
     ) {
         lifecycleScope.launch(Dispatchers.IO) {
@@ -304,14 +305,17 @@ class MainActivity : ComponentActivity() {
                     target.copy(status = ScheduleStatus.CONFIRMED)
                 }
 
-                // If time is specified, emit reminder_created and alarm_set events
+                // If time is specified, emit reminder_created (and alarm_set if enableAlarm)
                 if (!updatedTarget.time_unspecified && updatedTarget.start != null) {
                     val startTimeMs = try {
                         SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).parse(updatedTarget.start!!)?.time
                     } catch (_: Exception) { null }
 
                     if (startTimeMs != null) {
-                        val reminderTimeMs = startTimeMs - 15 * 60 * 1000
+                        val reminderLeadMin = DiagnosticsManager.getReminderLeadTimeMinutes(this@MainActivity)
+                        val alarmLeadMin = DiagnosticsManager.getAlarmLeadTimeMinutes(this@MainActivity)
+
+                        val reminderTimeMs = startTimeMs - reminderLeadMin * 60 * 1000L
                         val reminderIso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
                             timeZone = TimeZone.getTimeZone("UTC")
                         }.format(Date(reminderTimeMs))
@@ -334,29 +338,36 @@ class MainActivity : ComponentActivity() {
                         )
                         db.eventDao().insertEvent(reminderEntity)
 
-                        val alarmPayload = JSONObject().apply {
-                            put("schedule_id", updatedTarget.id)
-                            put("title", updatedTarget.title)
-                            put("trigger_time", updatedTarget.start)
-                            put("type", "alarm")
+                        if (enableAlarm) {
+                            val alarmTimeMs = startTimeMs - alarmLeadMin * 60 * 1000L
+                            val alarmIso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+                                timeZone = TimeZone.getTimeZone("UTC")
+                            }.format(Date(alarmTimeMs))
+
+                            val alarmPayload = JSONObject().apply {
+                                put("schedule_id", updatedTarget.id)
+                                put("title", updatedTarget.title)
+                                put("trigger_time", alarmIso)
+                                put("type", "alarm")
+                            }
+                            val alarmEntity = SyncEventEntity(
+                                id = UUID.randomUUID().toString(),
+                                timestamp = nowIso,
+                                deviceId = deviceId,
+                                seq = nextSeq + 2,
+                                hlc = hlcNow,
+                                type = "alarm_set",
+                                entityId = "alarm-${updatedTarget.id}",
+                                payload = alarmPayload.toString()
+                            )
+                            db.eventDao().insertEvent(alarmEntity)
                         }
-                        val alarmEntity = SyncEventEntity(
-                            id = UUID.randomUUID().toString(),
-                            timestamp = nowIso,
-                            deviceId = deviceId,
-                            seq = nextSeq + 2,
-                            hlc = hlcNow,
-                            type = "alarm_set",
-                            entityId = "alarm-${updatedTarget.id}",
-                            payload = alarmPayload.toString()
-                        )
-                        db.eventDao().insertEvent(alarmEntity)
                     }
                 }
 
                 try {
                     withContext(Dispatchers.Main) {
-                        alarmScheduler.scheduleAlertsForSchedule(updatedTarget)
+                        alarmScheduler.scheduleAlertsForSchedule(updatedTarget, enableAlarm = enableAlarm)
                     }
                 } catch (e: Exception) {
                     android.util.Log.e("MainActivity", "Alarm scheduling failed: ${e.message}", e)
@@ -385,6 +396,66 @@ class MainActivity : ComponentActivity() {
 
             withContext(Dispatchers.Main) {
                 alarmScheduler.cancelAlertsForSchedule(id)
+            }
+        }
+    }
+
+    fun handleCancelSchedule(id: String) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val nextSeq = db.eventDao().getNextSeq(deviceId)
+            val hlcNow = hlc.now()
+            val nowIso = getIsoNow()
+
+            val cancelEntity = SyncEventEntity(
+                id = UUID.randomUUID().toString(),
+                timestamp = nowIso,
+                deviceId = deviceId,
+                seq = nextSeq,
+                hlc = hlcNow,
+                type = "event_cancelled",
+                entityId = id,
+                payload = "{}"
+            )
+            db.eventDao().insertEvent(cancelEntity)
+
+            withContext(Dispatchers.Main) {
+                alarmScheduler.cancelAlertsForSchedule(id)
+            }
+        }
+    }
+
+    fun handleRescheduleSchedule(
+        id: String,
+        newStart: String,
+        enableAlarm: Boolean = false,
+        projectedState: com.scheduleassistant.app.data.projection.ProjectedState
+    ) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val nextSeq = db.eventDao().getNextSeq(deviceId)
+            val hlcNow = hlc.now()
+            val nowIso = getIsoNow()
+
+            val payloadJson = JSONObject().apply {
+                put("start", newStart)
+            }
+            val rescheduleEntity = SyncEventEntity(
+                id = UUID.randomUUID().toString(),
+                timestamp = nowIso,
+                deviceId = deviceId,
+                seq = nextSeq,
+                hlc = hlcNow,
+                type = "event_rescheduled",
+                entityId = id,
+                payload = payloadJson.toString()
+            )
+            db.eventDao().insertEvent(rescheduleEntity)
+
+            val target = projectedState.schedules[id]
+            if (target != null) {
+                val updatedTarget = target.copy(start = newStart, time_unspecified = false)
+                withContext(Dispatchers.Main) {
+                    alarmScheduler.rescheduleAlertsForSchedule(updatedTarget, enableAlarm = enableAlarm)
+                }
             }
         }
     }

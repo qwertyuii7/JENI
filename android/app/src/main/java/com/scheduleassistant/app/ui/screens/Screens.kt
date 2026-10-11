@@ -219,9 +219,144 @@ fun HomeScreen(
 }
 
 @Composable
+fun PendingItemCard(
+    item: ScheduleEntity,
+    onConfirm: (String, String?, Boolean) -> Unit,
+    onDismiss: (String) -> Unit
+) {
+    var enableAlarm by remember { mutableStateOf(false) }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = CardBg),
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(item.title, fontWeight = FontWeight.Bold, color = TextLight, fontSize = 17.sp)
+                Badge(containerColor = if (item.ambiguous) Warning else Primary) {
+                    Text("${(item.confidence * 100).toInt()}% Conf", color = Color.White)
+                }
+            }
+
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = item.start ?: "Date: ${item.start_date} (Time Unspecified)",
+                color = Accent,
+                fontSize = 14.sp
+            )
+
+            Spacer(Modifier.height(8.dp))
+            // Minimal source quote in terminal box
+            Surface(
+                color = Color(0x33000000),
+                shape = RoundedCornerShape(6.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = "Source: \"${item.source_quote}\"",
+                    color = Color(0xFF38BDF8),
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(8.dp)
+                )
+            }
+
+            // Requirement 4: Reminder by default; alarm is opt-in per event (toggle on Pending/Confirm card)
+            Spacer(Modifier.height(10.dp))
+            Surface(
+                color = if (enableAlarm) Color(0x22F59E0B) else CardBorder,
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = if (enableAlarm) "⏰ Audible Alarm (Opt-in Active)" else "🔔 Reminder Notification (Default)",
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (enableAlarm) Warning else TextLight,
+                            fontSize = 13.sp
+                        )
+                        Text(
+                            text = if (enableAlarm) "Will ring aloud with full-screen Alarm UI" else "Banner notification only (default 15m lead)",
+                            color = TextMuted,
+                            fontSize = 11.sp
+                        )
+                    }
+                    Switch(
+                        checked = enableAlarm,
+                        onCheckedChange = { enableAlarm = it },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = Warning
+                        )
+                    )
+                }
+            }
+
+            // Ambiguous AM/PM Dual Reading buttons
+            if (item.ambiguous && item.start != null) {
+                Spacer(Modifier.height(8.dp))
+                Text("Ambiguous AM/PM detected — choose reading:", color = Warning, fontSize = 12.sp)
+                Spacer(Modifier.height(4.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { onConfirm(item.id, item.start, enableAlarm) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Warning)
+                    ) {
+                        Text("Confirm Reading A", color = Color.Black, fontSize = 12.sp)
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            val dateStr = item.start!!.split("T")[0]
+                            val timeStr = item.start!!.split("T")[1].substring(0, 5)
+                            val h = timeStr.split(":")[0].toInt()
+                            val m = timeStr.split(":")[1].toInt()
+                            val altH = if (h < 12) h + 12 else h - 12
+                            val altIso = String.format(Locale.US, "%sT%02d:%02d:00+05:30", dateStr, altH, m)
+                            onConfirm(item.id, altIso, enableAlarm)
+                        }
+                    ) {
+                        Text("Confirm Reading B", color = TextLight, fontSize = 12.sp)
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (!item.ambiguous && item.start != null) {
+                    Button(
+                        onClick = { onConfirm(item.id, null, enableAlarm) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Success)
+                    ) {
+                        Text("Confirm", color = Color.White)
+                    }
+                }
+                Button(
+                    onClick = { onDismiss(item.id) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Danger)
+                ) {
+                    Text("Dismiss", color = Color.White)
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun PendingScreen(
     schedules: List<ScheduleEntity>,
-    onConfirm: (String, String?) -> Unit,
+    onConfirm: (String, String?, Boolean) -> Unit,
     onDismiss: (String) -> Unit
 ) {
     val pendingList = schedules.filter { it.status == ScheduleStatus.PENDING }
@@ -241,7 +376,7 @@ fun PendingScreen(
                 color = TextLight
             )
             Text(
-                text = "One-tap confirm or choose alternate AM/PM reading",
+                text = "One-tap confirm or choose alternate AM/PM reading. Reminder by default; alarm opt-in.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = TextMuted
             )
@@ -255,94 +390,11 @@ fun PendingScreen(
             }
         } else {
             items(pendingList) { item ->
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = CardBg),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(item.title, fontWeight = FontWeight.Bold, color = TextLight, fontSize = 17.sp)
-                            Badge(containerColor = if (item.ambiguous) Warning else Primary) {
-                                Text("${(item.confidence * 100).toInt()}% Conf", color = Color.White)
-                            }
-                        }
-
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            text = item.start ?: "Date: ${item.start_date} (Time Unspecified)",
-                            color = Accent,
-                            fontSize = 14.sp
-                        )
-
-                        Spacer(Modifier.height(8.dp))
-                        // Minimal source quote in terminal box
-                        Surface(
-                            color = Color(0x33000000),
-                            shape = RoundedCornerShape(6.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                text = "Source: \"${item.source_quote}\"",
-                                color = Color(0xFF38BDF8),
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 12.sp,
-                                modifier = Modifier.padding(8.dp)
-                            )
-                        }
-
-                        // Ambiguous AM/PM Dual Reading buttons
-                        if (item.ambiguous && item.start != null) {
-                            Spacer(Modifier.height(8.dp))
-                            Text("Ambiguous AM/PM detected — choose reading:", color = Warning, fontSize = 12.sp)
-                            Spacer(Modifier.height(4.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(
-                                    onClick = { onConfirm(item.id, item.start) },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Warning)
-                                ) {
-                                    Text("Confirm Reading A", color = Color.Black, fontSize = 12.sp)
-                                }
-                                OutlinedButton(
-                                    onClick = {
-                                        // 12-hour flip
-                                        val dateStr = item.start!!.split("T")[0]
-                                        val timeStr = item.start!!.split("T")[1].substring(0, 5)
-                                        val h = timeStr.split(":")[0].toInt()
-                                        val m = timeStr.split(":")[1].toInt()
-                                        val altH = if (h < 12) h + 12 else h - 12
-                                        val altIso = String.format(Locale.US, "%sT%02d:%02d:00+05:30", dateStr, altH, m)
-                                        onConfirm(item.id, altIso)
-                                    }
-                                ) {
-                                    Text("Confirm Reading B", color = TextLight, fontSize = 12.sp)
-                                }
-                            }
-                        }
-
-                        Spacer(Modifier.height(12.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            if (!item.ambiguous && item.start != null) {
-                                Button(
-                                    onClick = { onConfirm(item.id, null) },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Success)
-                                ) {
-                                    Text("Confirm", color = Color.White)
-                                }
-                            }
-                            Button(
-                                onClick = { onDismiss(item.id) },
-                                colors = ButtonDefaults.buttonColors(containerColor = Danger)
-                            ) {
-                                Text("Dismiss", color = Color.White)
-                            }
-                        }
-                    }
-                }
+                PendingItemCard(
+                    item = item,
+                    onConfirm = onConfirm,
+                    onDismiss = onDismiss
+                )
             }
         }
     }
@@ -955,6 +1007,25 @@ fun DiagnosticsScreen(
 
                     Divider(color = CardBorder)
 
+                    // Full-Screen Intent Allowed Row (Requirement 6)
+                    val canUseFullScreen = remember { DiagnosticsManager.canUseFullScreenIntent(context) }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Full-Screen Intent Allowed", color = TextLight, fontSize = 14.sp)
+                            Text("Survives lockscreen & DND for alarm ringing UI. (needs owner verification)", color = TextMuted, fontSize = 12.sp)
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Badge(containerColor = if (canUseFullScreen) Success else Warning) {
+                            Text(if (canUseFullScreen) "ALLOWED" else "BLOCKED", color = Color.White)
+                        }
+                    }
+
+                    Divider(color = CardBorder)
+
                     // 1. canScheduleExactAlarms Row (Task E)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -1054,6 +1125,67 @@ fun DiagnosticsScreen(
                             color = TextLight,
                             fontSize = 13.sp
                         )
+                    }
+                }
+            }
+        }
+
+        // Alert Lead Time Configuration Card (Requirement 4)
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = CardBg),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                var reminderLead by remember { mutableStateOf(DiagnosticsManager.getReminderLeadTimeMinutes(context)) }
+                var alarmLead by remember { mutableStateOf(DiagnosticsManager.getAlarmLeadTimeMinutes(context)) }
+
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Alert Lead Time Configuration", fontWeight = FontWeight.Bold, color = TextLight, fontSize = 16.sp)
+                    Text("Configures how far in advance reminders and alarms trigger. (needs owner verification)", color = TextMuted, fontSize = 12.sp)
+
+                    // Reminder Lead Time
+                    Text("Reminder Lead Time: $reminderLead min before event (Default: 15m)", color = Accent, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf(5, 10, 15, 30, 60).forEach { mins ->
+                            Button(
+                                onClick = {
+                                    reminderLead = mins
+                                    DiagnosticsManager.setReminderLeadTimeMinutes(context, mins)
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (reminderLead == mins) Primary else CardBorder
+                                )
+                            ) {
+                                Text("${mins}m", fontSize = 12.sp, color = if (reminderLead == mins) Color.White else TextLight)
+                            }
+                        }
+                    }
+
+                    Divider(color = CardBorder)
+
+                    // Alarm Lead Time
+                    Text("Alarm Lead Time: ${if (alarmLead == 0) "At start (0 min / default)" else "$alarmLead min before event"}", color = Warning, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf(0 to "Start", 5 to "5m", 10 to "10m", 15 to "15m").forEach { (mins, label) ->
+                            Button(
+                                onClick = {
+                                    alarmLead = mins
+                                    DiagnosticsManager.setAlarmLeadTimeMinutes(context, mins)
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (alarmLead == mins) Warning else CardBorder
+                                )
+                            ) {
+                                Text(label, fontSize = 12.sp, color = if (alarmLead == mins) Color.Black else TextLight)
+                            }
+                        }
                     }
                 }
             }

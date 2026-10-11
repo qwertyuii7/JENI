@@ -9,7 +9,6 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.PowerManager
-import android.provider.AlarmClock
 import androidx.core.app.NotificationCompat
 import com.scheduleassistant.app.data.db.AlarmAuditEntity
 import com.scheduleassistant.app.data.db.AppDatabase
@@ -26,7 +25,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.text.SimpleDateFormat
-import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
@@ -54,7 +52,7 @@ class AlarmScheduler(private val context: Context) {
         return df.format(Date(next.triggerTime))
     }
 
-    private fun recordAudit(
+    fun recordAudit(
         entityId: String,
         triggerTime: String,
         api: String,
@@ -79,7 +77,12 @@ class AlarmScheduler(private val context: Context) {
         }
     }
 
-    fun scheduleAlertsForSchedule(schedule: ScheduleEntity): Boolean {
+    /**
+     * Requirement 1 & 4: One mechanism only (AlarmManager.setAlarmClock + AlarmRingingService).
+     * Reminder is default (lead time configurable in Settings).
+     * Alarm is opt-in per event (enableAlarm parameter).
+     */
+    fun scheduleAlertsForSchedule(schedule: ScheduleEntity, enableAlarm: Boolean = false): Boolean {
         // HARD INVARIANT: time_unspecified or unconfirmed schedules NEVER produce alarms/reminders
         if (schedule.time_unspecified || schedule.start == null || schedule.status != ScheduleStatus.CONFIRMED) {
             recordAudit(
@@ -107,87 +110,110 @@ class AlarmScheduler(private val context: Context) {
         }
 
         val nowMs = System.currentTimeMillis()
-        val alarmTimeMs = startTime
-        val reminderTimeMs = startTime - 15 * 60 * 1000 // T - 15m
-
-        // Product Decision (Task B):
-        // 1. Alarm: Must actually RING. Implement via AlarmClock.ACTION_SET_ALARM with EXTRA_SKIP_UI=true
-        // into the system Clock app (declared com.android.alarm.permission.SET_ALARM).
-        try {
-            val cal = Calendar.getInstance().apply { timeInMillis = startTime }
-            val hour = cal.get(Calendar.HOUR_OF_DAY)
-            val minute = cal.get(Calendar.MINUTE)
-
-            val clockIntent = Intent(AlarmClock.ACTION_SET_ALARM).apply {
-                putExtra(AlarmClock.EXTRA_HOUR, hour)
-                putExtra(AlarmClock.EXTRA_MINUTES, minute)
-                putExtra(AlarmClock.EXTRA_MESSAGE, schedule.title)
-                putExtra(AlarmClock.EXTRA_SKIP_UI, true)
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            }
-
-            if (clockIntent.resolveActivity(context.packageManager) != null) {
-                context.startActivity(clockIntent)
-                recordAudit(
-                    entityId = "alarm-${schedule.id}",
-                    triggerTime = schedule.start ?: "",
-                    api = "AlarmClock.ACTION_SET_ALARM",
-                    result = "SUCCESS",
-                    errorMessage = null
-                )
-            } else {
-                recordAudit(
-                    entityId = "alarm-${schedule.id}",
-                    triggerTime = schedule.start ?: "",
-                    api = "AlarmClock.ACTION_SET_ALARM",
-                    result = "ERROR",
-                    errorMessage = "No system Clock app resolved for ACTION_SET_ALARM. Falling back to in-app ringing."
-                )
-            }
-        } catch (e: Exception) {
+        if (startTime <= nowMs) {
             recordAudit(
-                entityId = "alarm-${schedule.id}",
+                entityId = schedule.id,
                 triggerTime = schedule.start ?: "",
-                api = "AlarmClock.ACTION_SET_ALARM",
-                result = "ERROR",
-                errorMessage = "${e.javaClass.simpleName}: ${e.message}"
+                api = "AlarmScheduler.leadTime",
+                result = "SKIPPED",
+                errorMessage = "Event start time is already in the past"
             )
+            return false
         }
 
-        // 2. AlarmClock via AlarmManager.setAlarmClock for status bar icon and in-app fallback
-        if (alarmTimeMs > nowMs) {
+        val reminderLeadMinutes = DiagnosticsManager.getReminderLeadTimeMinutes(context)
+        val alarmLeadMinutes = DiagnosticsManager.getAlarmLeadTimeMinutes(context)
+
+        val reminderTargetMs = startTime - reminderLeadMinutes * 60 * 1000L
+        val alarmTargetMs = startTime - alarmLeadMinutes * 60 * 1000L
+
+        // Requirement 3: If reminder time is already past but event is in the future,
+        // fire reminder immediately. Never skip silently; audit it.
+        val effectiveReminderTimeMs = if (reminderTargetMs > nowMs) {
+            reminderTargetMs
+        } else {
+            nowMs + 1000L // Fire immediately (1 second from now)
+        }
+
+        val isImmediateReminder = reminderTargetMs <= nowMs
+        val reminderScheduled = scheduleAlarmClock(
+            id = schedule.id.hashCode() + 1,
+            triggerMs = effectiveReminderTimeMs,
+            title = "🔔 Reminder: ${schedule.title}",
+            scheduleId = schedule.id,
+            type = "notification",
+            isImmediate = isImmediateReminder
+        )
+
+        // Requirement 4: Alarm is opt-in per event
+        if (enableAlarm) {
+            val effectiveAlarmTimeMs = if (alarmTargetMs > nowMs) {
+                alarmTargetMs
+            } else {
+                nowMs + 1000L
+            }
+            val isImmediateAlarm = alarmTargetMs <= nowMs
             scheduleAlarmClock(
                 id = schedule.id.hashCode(),
-                triggerMs = alarmTimeMs,
-                title = "⏰ ${schedule.title}",
+                triggerMs = effectiveAlarmTimeMs,
+                title = "⏰ ALARM: ${schedule.title}",
                 scheduleId = schedule.id,
-                type = "alarm"
+                type = "alarm",
+                isImmediate = isImmediateAlarm
             )
         }
 
-        // 3. Notification Reminder at lead time (15m before)
-        val effectiveReminderTimeMs = if (reminderTimeMs > nowMs) {
-            reminderTimeMs
-        } else if (alarmTimeMs > nowMs) {
-            nowMs + 2000L // 2 seconds from now if lead time passed but event is in future
-        } else {
-            0L
-        }
-
-        if (effectiveReminderTimeMs > 0) {
-            scheduleAlarmClock(
-                id = schedule.id.hashCode() + 1,
-                triggerMs = effectiveReminderTimeMs,
-                title = "🔔 Reminder: ${schedule.title}",
-                scheduleId = schedule.id,
-                type = "notification"
-            )
-        }
-
-        return true
+        return reminderScheduled
     }
 
-    private fun scheduleAlarmClock(id: Int, triggerMs: Long, title: String, scheduleId: String, type: String) {
+    /**
+     * Requirement 2: Cancelling an event cancels its old reminder/alarm.
+     */
+    fun cancelAlertsForSchedule(scheduleId: String) {
+        val id = scheduleId.hashCode()
+        val alarmIntent = Intent(context, AlarmReceiver::class.java)
+        val p1 = PendingIntent.getBroadcast(context, id, alarmIntent, PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE)
+        val p2 = PendingIntent.getBroadcast(context, id + 1, alarmIntent, PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE)
+        p1?.let { alarmManager.cancel(it) }
+        p2?.let { alarmManager.cancel(it) }
+
+        AlarmRingingService.stopRinging(context, scheduleId)
+
+        recordAudit(
+            entityId = scheduleId,
+            triggerTime = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("UTC")
+            }.format(Date()),
+            api = "AlarmManager.cancel",
+            result = "SUCCESS",
+            errorMessage = null
+        )
+    }
+
+    /**
+     * Requirement 2: Rescheduling an event replaces old reminder/alarm with new one.
+     */
+    fun rescheduleAlertsForSchedule(schedule: ScheduleEntity, enableAlarm: Boolean = false): Boolean {
+        cancelAlertsForSchedule(schedule.id)
+        val scheduled = scheduleAlertsForSchedule(schedule, enableAlarm = enableAlarm)
+        recordAudit(
+            entityId = schedule.id,
+            triggerTime = schedule.start ?: "",
+            api = "AlarmScheduler.reschedule",
+            result = if (scheduled) "SUCCESS" else "ERROR",
+            errorMessage = "Replaced previous alert with updated start time"
+        )
+        return scheduled
+    }
+
+    fun scheduleAlarmClock(
+        id: Int,
+        triggerMs: Long,
+        title: String,
+        scheduleId: String,
+        type: String,
+        isImmediate: Boolean = false
+    ): Boolean {
         val showIntent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
         }
@@ -211,32 +237,41 @@ class AlarmScheduler(private val context: Context) {
             timeZone = TimeZone.getTimeZone("UTC")
         }.format(Date(triggerMs))
 
-        try {
+        val apiName = if (isImmediate) {
+            "AlarmManager.setAlarmClock (Immediate $type)"
+        } else {
+            "AlarmManager.setAlarmClock ($type)"
+        }
+
+        return try {
             val alarmClockInfo = AlarmManager.AlarmClockInfo(triggerMs, showPendingIntent)
             alarmManager.setAlarmClock(alarmClockInfo, alarmPendingIntent)
             recordAudit(
                 entityId = if (type == "alarm") "alarm-$scheduleId" else "rem-$scheduleId",
                 triggerTime = timeStr,
-                api = "AlarmManager.setAlarmClock",
+                api = apiName,
                 result = "SUCCESS",
-                errorMessage = null
+                errorMessage = if (isImmediate) "Lead time was past, scheduled immediately" else null
             )
+            true
         } catch (e: SecurityException) {
             recordAudit(
                 entityId = if (type == "alarm") "alarm-$scheduleId" else "rem-$scheduleId",
                 triggerTime = timeStr,
-                api = "AlarmManager.setAlarmClock",
+                api = apiName,
                 result = "ERROR",
                 errorMessage = "SecurityException: Exact alarms not permitted (canScheduleExactAlarms=${canScheduleExactAlarms()})"
             )
+            false
         } catch (e: Exception) {
             recordAudit(
                 entityId = if (type == "alarm") "alarm-$scheduleId" else "rem-$scheduleId",
                 triggerTime = timeStr,
-                api = "AlarmManager.setAlarmClock",
+                api = apiName,
                 result = "ERROR",
                 errorMessage = "${e.javaClass.simpleName}: ${e.message}"
             )
+            false
         }
     }
 
@@ -312,25 +347,6 @@ class AlarmScheduler(private val context: Context) {
             )
         }
     }
-
-    fun cancelAlertsForSchedule(scheduleId: String) {
-        val id = scheduleId.hashCode()
-        val alarmIntent = Intent(context, AlarmReceiver::class.java)
-        val p1 = PendingIntent.getBroadcast(context, id, alarmIntent, PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE)
-        val p2 = PendingIntent.getBroadcast(context, id + 1, alarmIntent, PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE)
-        p1?.let { alarmManager.cancel(it) }
-        p2?.let { alarmManager.cancel(it) }
-
-        recordAudit(
-            entityId = scheduleId,
-            triggerTime = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
-                timeZone = TimeZone.getTimeZone("UTC")
-            }.format(Date()),
-            api = "AlarmManager.cancel",
-            result = "SUCCESS",
-            errorMessage = null
-        )
-    }
 }
 
 class AlarmReceiver : BroadcastReceiver() {
@@ -338,7 +354,10 @@ class AlarmReceiver : BroadcastReceiver() {
         val isTestAlarm = intent.getBooleanExtra("EXTRA_IS_TEST_ALARM", false)
 
         val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
-        val wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ScheduleAssistant:AlarmWakeLock")
+        val wakeLock = powerManager.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+            "ScheduleAssistant:AlarmWakeLock"
+        )
         wakeLock.acquire(10 * 1000L) // 10 seconds max
 
         val channelId = "schedule_alerts_channel"
@@ -360,23 +379,25 @@ class AlarmReceiver : BroadcastReceiver() {
             val firedTimeMs = System.currentTimeMillis()
             val delayMs = firedTimeMs - scheduledTimeMs
 
+            // Guard against double ringing (Requirement 1: one ringer per alarm id)
+            if (!AlarmRingingService.isRinging(testId)) {
+                try {
+                    val ringIntent = Intent(context, AlarmRingingService::class.java).apply {
+                        putExtra("EXTRA_TITLE", "Test Alarm Fired")
+                        putExtra("EXTRA_SCHEDULE_ID", testId)
+                        putExtra("EXTRA_IS_TEST", true)
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        context.startForegroundService(ringIntent)
+                    } else {
+                        context.startService(ringIntent)
+                    }
+                } catch (_: Exception) {}
+            }
+
             val timeFormat = SimpleDateFormat("h:mm:ss a", Locale.US)
             val schedStr = timeFormat.format(Date(scheduledTimeMs))
             val fireStr = timeFormat.format(Date(firedTimeMs))
-
-            // Start audible and full-screen alarm ringing service
-            try {
-                val ringIntent = Intent(context, AlarmRingingService::class.java).apply {
-                    putExtra("EXTRA_TITLE", "Test Alarm Fired")
-                    putExtra("EXTRA_SCHEDULE_ID", testId)
-                    putExtra("EXTRA_IS_TEST", true)
-                }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    context.startForegroundService(ringIntent)
-                } else {
-                    context.startService(ringIntent)
-                }
-            } catch (_: Exception) {}
 
             val openIntent = Intent(context, MainActivity::class.java)
             val pendingOpen = PendingIntent.getActivity(
@@ -424,20 +445,22 @@ class AlarmReceiver : BroadcastReceiver() {
         val type = intent.getStringExtra("EXTRA_TYPE") ?: "alarm"
         val triggerMs = intent.getLongExtra("EXTRA_TRIGGER_MS", System.currentTimeMillis())
 
-        // If it is an ALARM, start the audible ringing service
+        // Requirement 1 & 6: If it is an ALARM, start the audible ringing service (one ringer per id)
         if (type == "alarm") {
-            try {
-                val ringIntent = Intent(context, AlarmRingingService::class.java).apply {
-                    putExtra("EXTRA_TITLE", title)
-                    putExtra("EXTRA_SCHEDULE_ID", scheduleId)
-                    putExtra("EXTRA_IS_TEST", false)
-                }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    context.startForegroundService(ringIntent)
-                } else {
-                    context.startService(ringIntent)
-                }
-            } catch (_: Exception) {}
+            if (!AlarmRingingService.isRinging(scheduleId)) {
+                try {
+                    val ringIntent = Intent(context, AlarmRingingService::class.java).apply {
+                        putExtra("EXTRA_TITLE", title)
+                        putExtra("EXTRA_SCHEDULE_ID", scheduleId)
+                        putExtra("EXTRA_IS_TEST", false)
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        context.startForegroundService(ringIntent)
+                    } else {
+                        context.startService(ringIntent)
+                    }
+                } catch (_: Exception) {}
+            }
         }
 
         // Check if missed due to device downtime
@@ -501,6 +524,10 @@ class AlarmReceiver : BroadcastReceiver() {
     }
 }
 
+/**
+ * Requirement 7: Boot recovery re-registers all future alarms from the event log;
+ * audit entries per attempt.
+ */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action
@@ -522,6 +549,13 @@ class BootReceiver : BroadcastReceiver() {
                 val pendingTestAlarms = db.alarmTestDao().getPendingRecords(System.currentTimeMillis())
                 for (testAlarm in pendingTestAlarms) {
                     scheduler.scheduleTestAlarmClock(testAlarm.id, testAlarm.scheduledTimeMs, firedAfterReboot = true)
+                    scheduler.recordAudit(
+                        entityId = testAlarm.id,
+                        triggerTime = "${testAlarm.scheduledTimeMs}",
+                        api = "BootReceiver.restoreTestAlarm",
+                        result = "SUCCESS",
+                        errorMessage = "Restored test alarm on device reboot"
+                    )
                 }
 
                 // Restore regular alarms on reboot from Room database
@@ -549,7 +583,16 @@ class BootReceiver : BroadcastReceiver() {
                 val state = ProjectionEngine.projectState(syncEvents)
                 for (schedule in state.schedules.values) {
                     if (schedule.status == ScheduleStatus.CONFIRMED && !schedule.time_unspecified && schedule.start != null) {
-                        scheduler.scheduleAlertsForSchedule(schedule)
+                        // Check if an alarm_set event exists for this schedule in syncEvents
+                        val hasAlarmEvent = syncEvents.any { it.type == "alarm_set" && (it.entity_id == "alarm-${schedule.id}" || it.payload["schedule_id"] == schedule.id) }
+                        val success = scheduler.scheduleAlertsForSchedule(schedule, enableAlarm = hasAlarmEvent)
+                        scheduler.recordAudit(
+                            entityId = schedule.id,
+                            triggerTime = schedule.start ?: "",
+                            api = "BootReceiver.restoreScheduleAlerts",
+                            result = if (success) "SUCCESS" else "SKIPPED",
+                            errorMessage = if (success) "Restored alerts on device reboot" else "Start time in past or gate blocked"
+                        )
                     }
                 }
             }
