@@ -57,6 +57,7 @@ export interface ScheduleEntity {
   start?: string;
   start_date?: string;
   time_unspecified?: boolean;
+  ambiguous?: boolean;
   status: 'PENDING' | 'CONFIRMED' | 'DISMISSED' | 'CANCELLED';
   source_quote: string;
   raw_text?: string;

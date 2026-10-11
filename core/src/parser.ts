@@ -1,5 +1,6 @@
 import { ExtractionOutput } from './types.js';
 import { prefilterMessage } from './prefilter.js';
+import { keywordsSpec } from './spec_loader.js';
 
 export function normalizeDevanagariNumerals(text: string): string {
   const devanagariDigits: Record<string, string> = {
@@ -43,29 +44,9 @@ function pad(n: number): string {
   return String(n).padStart(2, '0');
 }
 
-const KNOWN_SUBJECTS = [
-  'Seminar on Cloud Computing', 'Database backup maintenance', 'Security audit walkthrough',
-  'Backend architecture discussion', 'One on one with manager', 'Interview with candidate',
-  'Code review session', 'Release retrospective', 'Frontend guild meetup', 'Machine Learning lab',
-  'Quarterly town hall', 'Hackathon briefing', 'Architecture review', 'Dentist appointment',
-  'Chemistry practical', 'Peer testing session', 'server maintenance', 'dinner meeting',
-  'badminton match', 'farewell meeting', 'Doctor appointment', 'tutorial class', 'emergency sync',
-  'catch up call', 'new year review', 'project discussion', 'project review', 'project deadline',
-  'lunch meeting', 'product demo', 'product sync', 'Doctor checkup', 'Sprint planning',
-  'physics test', 'Physics lecture', 'Algorithms viva', 'HR orientation', 'Weekly catchup',
-  'weekly sync', 'Strategy meeting', 'Office all hands', 'morning yoga', 'coding round',
-  'demo session', 'group study', 'guest lecture', 'review call', 'client call', 'client demo',
-  'team sync', 'team meeting', 'project sync', 'sync meeting', 'lab session', 'lab test',
-  'Math exam', 'math test', 'math quiz', 'DBMS class', 'DBMS lecture', 'DBMS quiz',
-  'OS lecture', 'OS class', 'OS test', 'Board meeting', 'Design sync', 'Marketing review',
-  'AI workshop', 'Budget meeting', 'code review', 'standup', 'presentation', 'webinar',
-  'orientation', 'kickoff', 'workshop', 'seminar', 'interview', 'meeting', 'lecture',
-  'classes', 'class', 'viva', 'quiz', 'exam', 'test', 'call', 'lab', 'flight', 'assembly',
-  'deployment', 'holiday', 'review', 'sync',
-  // Hindi
-  'योग कक्षा', 'कार्यशाला', 'प्रेजेंटेशन', 'इंटरव्यू', 'परीक्षा', 'सेमिनार', 'लेक्चर',
-  'मीटिंग', 'क्लास', 'चर्चा', 'टेस्ट', 'कॉल', 'लैब'
-].sort((a, b) => b.length - a.length);
+const KNOWN_SUBJECTS = (keywordsSpec.known_subjects.length > 0 ? keywordsSpec.known_subjects : [
+  'DBMS class', 'DBMS lecture', 'team sync', 'meeting', 'class'
+]).slice().sort((a, b) => b.length - a.length);
 
 export function parseScheduleMessage(
   rawText: string,
@@ -98,16 +79,21 @@ export function parseScheduleMessage(
 
   // 2. Relative Day Offset
   let dayOffset: number | null = null;
+  let hasDayMention = false;
   const isNextWeek = /\b(next|agle)\b/i.test(lower) || lower.includes('अगले');
 
   if (/\b(kal|tomorrow)\b/i.test(lower) || lower.includes('कल')) {
     dayOffset = 1;
+    hasDayMention = true;
   } else if (/\b(parso|day after tomorrow)\b/i.test(lower) || lower.includes('परसों')) {
     dayOffset = 2;
+    hasDayMention = true;
   } else if (/\b(tarso)\b/i.test(lower)) {
     dayOffset = 3;
+    hasDayMention = true;
   } else if (/\b(aaj|today)\b/i.test(lower) || lower.includes('आज')) {
     dayOffset = 0;
+    hasDayMention = true;
   } else {
     const weekdayMap: Record<string, number> = {
       'somvar': 1, 'monday': 1, 'सोमवार': 1,
@@ -121,6 +107,7 @@ export function parseScheduleMessage(
 
     for (const [dayName, dayIndex] of Object.entries(weekdayMap)) {
       if (lower.includes(dayName)) {
+        hasDayMention = true;
         if (isNextWeek) {
           if (dayIndex === refWeekday) {
             dayOffset = 7;
@@ -140,6 +127,7 @@ export function parseScheduleMessage(
   // Edge case: Late night 23:50 with early morning "raat 5"
   if (dayOffset === null && refHour >= 22 && /\braat\s+[1-5]\b/i.test(lower)) {
     dayOffset = 1;
+    hasDayMention = true;
   }
 
   // 3. Time Parsing
@@ -236,18 +224,30 @@ export function parseScheduleMessage(
     }
   }
 
-  // Disambiguate same-weekday when dayOffset was null
+  // Disambiguate dayOffset
   if (dayOffset === null) {
-    if (timeUnspecified || hour === null) {
-      const mentionsWeekday = /\b(monday|somvar|सोमवार)\b/i.test(lower) || lower.includes('सोमवार');
-      dayOffset = (mentionsWeekday || type !== 'cancel') ? 7 : 0;
-      if (type !== 'cancel') isAmbiguous = true;
-    } else {
-      const isAhead = (hour > refHour) || (hour === refHour && minute > refMinute);
-      if (isAhead) {
-        dayOffset = 0;
+    if (!hasDayMention) {
+      if (hour === null) {
+        if (type === 'cancel') {
+          dayOffset = 0;
+          timeUnspecified = true;
+        } else {
+          // No day/date AND no time specified: cannot parse schedule
+          return null;
+        }
       } else {
+        dayOffset = 0;
+      }
+    } else {
+      // Mentioned weekday matched today's weekday
+      if (timeUnspecified || hour === null) {
         dayOffset = 7;
+        if (type !== 'cancel') {
+          isAmbiguous = true;
+        }
+      } else {
+        const isAhead = (hour > refHour) || (hour === refHour && minute > refMinute);
+        dayOffset = isAhead ? 0 : 7;
       }
     }
   }

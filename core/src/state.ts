@@ -1,14 +1,13 @@
 import { SyncEvent, ScheduleEntity, ExtractionOutput, ReminderEntity } from './types.js';
+import { synonymsSpec } from './spec_loader.js';
 
-// Synonyms map strictly within categories (no cross-type mixing)
-const INTRA_TYPE_SYNONYMS: Record<string, string[]> = {
-  'class': ['lecture', 'period', 'session'],
-  'lecture': ['class', 'period', 'session'],
-  'meeting': ['sync', 'call', 'discussion', 'standup'],
-  'sync': ['meeting', 'call', 'discussion', 'standup'],
-  'call': ['meeting', 'sync', 'discussion'],
-  'discussion': ['meeting', 'sync', 'call']
-};
+// Flatten intra-type synonyms from spec
+const INTRA_TYPE_SYNONYMS: Record<string, string[]> = {};
+for (const group of Object.values(synonymsSpec)) {
+  for (const [key, list] of Object.entries(group)) {
+    INTRA_TYPE_SYNONYMS[key.toLowerCase()] = list.map(s => s.toLowerCase());
+  }
+}
 
 export class EventStore {
   private events: SyncEvent[] = [];
