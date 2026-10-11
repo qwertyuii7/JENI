@@ -330,6 +330,22 @@ object DiagnosticsManager {
         }
         exportWrapper.put("historical_exit_reasons", exitReasonsArray)
 
+        // Export alarm audit logs
+        val audits = db.alarmAuditDao().getAllAudits()
+        val auditsArray = JSONArray()
+        for (a in audits) {
+            val aObj = JSONObject()
+            aObj.put("id", a.id)
+            aObj.put("entity_id", a.entityId)
+            aObj.put("trigger_time", a.triggerTime)
+            aObj.put("api", a.api)
+            aObj.put("result", a.result)
+            aObj.put("error_message", a.errorMessage ?: JSONObject.NULL)
+            aObj.put("timestamp", a.timestamp)
+            auditsArray.put(aObj)
+        }
+        exportWrapper.put("alarm_audit_logs", auditsArray)
+
         file.writeText(exportWrapper.toString(2))
         return file
     }
@@ -357,10 +373,13 @@ class HeartbeatWorker(context: Context, params: WorkerParameters) : CoroutineWor
     override suspend fun doWork(): Result {
         val pm = applicationContext.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
         val isIgnoring = pm?.isIgnoringBatteryOptimizations(applicationContext.packageName) ?: false
+        val db = AppDatabase.getInstance(applicationContext)
+        val currentNotificationCount = db.diagnosticLogDao().getDiagnosticLogCount()
         val details = JSONObject().apply {
             put("tick", "15min_workmanager")
             put("isIgnoringBatteryOptimizations", isIgnoring)
             put("systemUptimeMs", SystemClock.elapsedRealtime())
+            put("aggregate_notifications", currentNotificationCount)
         }.toString()
         DiagnosticsManager.recordHeartbeat(applicationContext, "WORKMANAGER_TICK", details)
         return Result.success()

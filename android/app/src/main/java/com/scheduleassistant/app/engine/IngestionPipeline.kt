@@ -208,6 +208,56 @@ class IngestionPipeline(
             payload = payload
         )
         eventStore.add(confirmEvent)
+
+        val effectiveStart = timeOverride ?: sched.start
+        val timeUnspecified = if (timeOverride != null) false else sched.time_unspecified
+
+        if (!timeUnspecified && effectiveStart != null) {
+            val startTimeMs = try {
+                SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).parse(effectiveStart)?.time
+            } catch (_: Exception) { null }
+
+            if (startTimeMs != null) {
+                val reminderTimeMs = startTimeMs - 15 * 60 * 1000
+                val reminderIso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+                    timeZone = TimeZone.getTimeZone("UTC")
+                }.format(Date(reminderTimeMs))
+
+                val reminderEvent = SyncEvent(
+                    id = UUID.randomUUID().toString(),
+                    timestamp = isoFormat.format(Date()),
+                    device_id = deviceId,
+                    seq = ++seqCounter,
+                    hlc = hlc.now(),
+                    type = "reminder_created",
+                    entity_id = "rem-$entityId",
+                    payload = mapOf(
+                        "schedule_id" to entityId,
+                        "title" to sched.title,
+                        "trigger_time" to reminderIso,
+                        "type" to "notification"
+                    )
+                )
+                eventStore.add(reminderEvent)
+
+                val alarmEvent = SyncEvent(
+                    id = UUID.randomUUID().toString(),
+                    timestamp = isoFormat.format(Date()),
+                    device_id = deviceId,
+                    seq = ++seqCounter,
+                    hlc = hlc.now(),
+                    type = "alarm_set",
+                    entity_id = "alarm-$entityId",
+                    payload = mapOf(
+                        "schedule_id" to entityId,
+                        "title" to sched.title,
+                        "trigger_time" to effectiveStart,
+                        "type" to "alarm"
+                    )
+                )
+                eventStore.add(alarmEvent)
+            }
+        }
         return true
     }
 

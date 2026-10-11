@@ -128,3 +128,21 @@ data class AlarmTestEntity(
     val firedAfterReboot: Boolean = false,
     val status: String = "SCHEDULED" // "SCHEDULED", "FIRED", "MISSED"
 )
+
+@Entity(
+    tableName = "alarm_audit_logs",
+    indices = [Index(value = ["timestamp"])]
+)
+data class AlarmAuditEntity(
+    @PrimaryKey
+    val id: String = java.util.UUID.randomUUID().toString(),
+    @ColumnInfo(name = "entity_id")
+    val entityId: String,
+    @ColumnInfo(name = "trigger_time")
+    val triggerTime: String,
+    val api: String, // "AlarmClock.ACTION_SET_ALARM", "AlarmManager.setAlarmClock", "AlarmRingingService"
+    val result: String, // "SUCCESS", "ERROR"
+    @ColumnInfo(name = "error_message")
+    val errorMessage: String? = null,
+    val timestamp: String // ISO 8601 UTC
+)

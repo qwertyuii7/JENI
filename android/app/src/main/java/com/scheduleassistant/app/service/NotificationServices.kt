@@ -162,10 +162,16 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         if (sbn == null) return
 
+        // Ignore our own package notifications to prevent self-trigger loops
+        if (sbn.packageName == applicationContext.packageName) return
+
+        // Ignore non-allowlisted packages (only log for WhatsApp packages)
+        if (!whatsAppHandler.isWhatsAppPackage(sbn.packageName)) return
+
         // Process through WhatsAppNotificationHandler
         val extractedMessages = whatsAppHandler.extractMessages(applicationContext, sbn)
 
-        // Log heartbeat onNotificationPosted (count only)
+        // Log heartbeat onNotificationPosted for allowlisted WhatsApp package only
         serviceScope.launch {
             val db = AppDatabase.getInstance(applicationContext)
             val currentCount = db.diagnosticLogDao().getDiagnosticLogCount()

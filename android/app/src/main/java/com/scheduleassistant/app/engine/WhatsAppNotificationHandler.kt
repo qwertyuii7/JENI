@@ -24,6 +24,14 @@ class WhatsAppNotificationHandler(
     private val dedupeCacheSize: Int = 500
 ) {
 
+    fun isWhatsAppPackage(packageName: String): Boolean {
+        return packageName == "com.whatsapp" || packageName == "com.whatsapp.w4b"
+    }
+
+    fun isWhatsAppPackage(context: Context, packageName: String): Boolean {
+        return DiagnosticsManager.getAllowedPackages(context).contains(packageName)
+    }
+
     // Thread-safe LRU cache for deduplication by (chat, text, postTime)
     private val dedupeCache = Collections.synchronizedMap(
         object : LinkedHashMap<String, Long>(dedupeCacheSize, 0.75f, true) {

@@ -89,9 +89,15 @@ Launch **Schedule Assistant** -> tap **Diagnostics** tab (bottom right) and veri
 - [ ] **Notification Listener State**: Displays `CONNECTED` (Green badge) (needs owner verification)
 - [ ] **Foreground Service**: Displays `ACTIVE` (Green badge) (needs owner verification)
 - [ ] **POST_NOTIFICATIONS**: Displays `GRANTED` (Green badge) (needs owner verification)
+- [ ] **canScheduleExactAlarms**: Displays `GRANTED` (Green badge) (needs owner verification)
+- [ ] **getNextAlarmClock**: Displays the exact next alarm timestamp and status bar alarm icon is visible immediately after scheduling (needs owner verification)
+- [ ] **Scheduled Alarm Count**: Reflects active scheduled alarms/reminders (needs owner verification)
+- [ ] **Last Scheduling Error**: Displays `NONE` (or explicit error details in red if scheduling failed) (needs owner verification)
+- [ ] **Alerts Tab Empty State & Audit Log**: If Alerts is empty, displays reason (unconfirmed events, past times, permission state) and table of recent scheduling attempts with SUCCESS/ERROR badges (needs owner verification)
+- [ ] **Alarm Self-Test Audible Ringing**: Self-test alarm fires on time and audibly RINGS on `USAGE_ALARM` with full-screen `AlarmRingingActivity` (Snooze + Dismiss) (needs owner verification)
+- [ ] **System Clock Integration**: Confirmed events trigger `AlarmClock.ACTION_SET_ALARM` with `EXTRA_SKIP_UI=true` into Samsung Clock app (`com.sec.android.app.clockpackage`), displaying One UI alarm icon and ringing via system clock (needs owner verification)
 - [ ] **Log-Only Mode Scope**: Toggle is **ON**; verified that log-only applies solely to real notification-listener ingestion, while Debug injection + Confirm + alarms remain functional (needs owner verification)
-- [ ] **Alarm Self-Test Control**: "Schedule test alarm" control (+1m, +2m, +5m, +10m) uses `setAlarmClock` and records scheduled vs actual fire time, delay in ms, and post-reboot survival without touching parser/events (needs owner verification)
-- [ ] **Automatic Heartbeat Log**: Append-only log automatically records ticks on process start (`Application.onCreate`), listener connect/disconnect, notifications (count only), service lifecycle, boot, and every 15 min via WorkManager (needs owner verification)
+- [ ] **Automatic Heartbeat Log**: Append-only log automatically records ticks on process start (`Application.onCreate`) + `ApplicationExitInfo`, listener connect/disconnect, WhatsApp notifications only (count only), service lifecycle, boot, and 15 min WorkManager aggregate ticks (needs owner verification)
 - [ ] **ApplicationExitInfo Historical Reasons**: Previous process exit reasons with timestamps automatically logged on process start (needs owner verification)
 
 ---

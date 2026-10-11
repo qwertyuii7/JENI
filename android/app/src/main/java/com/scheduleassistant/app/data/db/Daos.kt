@@ -117,4 +117,25 @@ interface AlarmTestDao {
     suspend fun getPendingRecords(nowMs: Long): List<AlarmTestEntity>
 }
 
+@Dao
+interface AlarmAuditDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAudit(audit: AlarmAuditEntity): Long
+
+    @Query("SELECT * FROM alarm_audit_logs ORDER BY timestamp DESC LIMIT :limit")
+    suspend fun getRecentAudits(limit: Int = 50): List<AlarmAuditEntity>
+
+    @Query("SELECT * FROM alarm_audit_logs ORDER BY timestamp DESC LIMIT :limit")
+    fun getRecentAuditsFlow(limit: Int = 50): Flow<List<AlarmAuditEntity>>
+
+    @Query("SELECT * FROM alarm_audit_logs WHERE result = 'ERROR' ORDER BY timestamp DESC LIMIT 1")
+    suspend fun getLastError(): AlarmAuditEntity?
+
+    @Query("SELECT * FROM alarm_audit_logs WHERE result = 'ERROR' ORDER BY timestamp DESC LIMIT 1")
+    fun getLastErrorFlow(): Flow<AlarmAuditEntity?>
+
+    @Query("SELECT * FROM alarm_audit_logs ORDER BY timestamp DESC")
+    suspend fun getAllAudits(): List<AlarmAuditEntity>
+}
+
 

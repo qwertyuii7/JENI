@@ -13,9 +13,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         DiagnosticLogEntity::class,
         SoakCheckpointEntity::class,
         HeartbeatLogEntity::class,
-        AlarmTestEntity::class
+        AlarmTestEntity::class,
+        AlarmAuditEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -25,6 +26,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun soakCheckpointDao(): SoakCheckpointDao
     abstract fun heartbeatLogDao(): HeartbeatLogDao
     abstract fun alarmTestDao(): AlarmTestDao
+    abstract fun alarmAuditDao(): AlarmAuditDao
 
     companion object {
         @Volatile

@@ -240,7 +240,10 @@ class MainActivity : ComponentActivity() {
                             handleDismissSchedule(id)
                         }
                     )
-                    AppTab.ALERTS -> AlertsScreen(reminders = reminders)
+                    AppTab.ALERTS -> AlertsScreen(
+                        reminders = reminders,
+                        confirmedCount = schedules.count { it.status == ScheduleStatus.CONFIRMED }
+                    )
                     AppTab.DEBUG -> DebugScreen(
                         onInjectMessage = { text ->
                             lifecycleScope.launch {
@@ -300,8 +303,63 @@ class MainActivity : ComponentActivity() {
                 } else {
                     target.copy(status = ScheduleStatus.CONFIRMED)
                 }
-                withContext(Dispatchers.Main) {
-                    alarmScheduler.scheduleAlertsForSchedule(updatedTarget)
+
+                // If time is specified, emit reminder_created and alarm_set events
+                if (!updatedTarget.time_unspecified && updatedTarget.start != null) {
+                    val startTimeMs = try {
+                        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).parse(updatedTarget.start!!)?.time
+                    } catch (_: Exception) { null }
+
+                    if (startTimeMs != null) {
+                        val reminderTimeMs = startTimeMs - 15 * 60 * 1000
+                        val reminderIso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+                            timeZone = TimeZone.getTimeZone("UTC")
+                        }.format(Date(reminderTimeMs))
+
+                        val reminderPayload = JSONObject().apply {
+                            put("schedule_id", updatedTarget.id)
+                            put("title", updatedTarget.title)
+                            put("trigger_time", reminderIso)
+                            put("type", "notification")
+                        }
+                        val reminderEntity = SyncEventEntity(
+                            id = UUID.randomUUID().toString(),
+                            timestamp = nowIso,
+                            deviceId = deviceId,
+                            seq = nextSeq + 1,
+                            hlc = hlcNow,
+                            type = "reminder_created",
+                            entityId = "rem-${updatedTarget.id}",
+                            payload = reminderPayload.toString()
+                        )
+                        db.eventDao().insertEvent(reminderEntity)
+
+                        val alarmPayload = JSONObject().apply {
+                            put("schedule_id", updatedTarget.id)
+                            put("title", updatedTarget.title)
+                            put("trigger_time", updatedTarget.start)
+                            put("type", "alarm")
+                        }
+                        val alarmEntity = SyncEventEntity(
+                            id = UUID.randomUUID().toString(),
+                            timestamp = nowIso,
+                            deviceId = deviceId,
+                            seq = nextSeq + 2,
+                            hlc = hlcNow,
+                            type = "alarm_set",
+                            entityId = "alarm-${updatedTarget.id}",
+                            payload = alarmPayload.toString()
+                        )
+                        db.eventDao().insertEvent(alarmEntity)
+                    }
+                }
+
+                try {
+                    withContext(Dispatchers.Main) {
+                        alarmScheduler.scheduleAlertsForSchedule(updatedTarget)
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("MainActivity", "Alarm scheduling failed: ${e.message}", e)
                 }
             }
         }

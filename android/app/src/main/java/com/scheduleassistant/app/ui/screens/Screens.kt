@@ -350,14 +350,25 @@ fun PendingScreen(
 
 @Composable
 fun AlertsScreen(
-    reminders: List<com.scheduleassistant.app.data.model.ReminderEntity>
+    reminders: List<com.scheduleassistant.app.data.model.ReminderEntity>,
+    confirmedCount: Int = 0
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val db = remember { AppDatabase.getInstance(context) }
+    val scheduler = remember { com.scheduleassistant.app.service.AlarmScheduler(context) }
+    val canScheduleExact = remember { scheduler.canScheduleExactAlarms() }
+    val nextAlarmClockStr = remember { scheduler.getNextAlarmClockFormatted() }
+    val lastErrorFlow = remember { db.alarmAuditDao().getLastErrorFlow() }
+    val lastError by lastErrorFlow.collectAsState(initial = null)
+    val auditsFlow = remember { db.alarmAuditDao().getRecentAuditsFlow(20) }
+    val recentAudits by auditsFlow.collectAsState(initial = emptyList())
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .background(DarkBg)
             .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
             Text(
@@ -367,7 +378,7 @@ fun AlertsScreen(
                 color = TextLight
             )
             Text(
-                text = "Exact AlarmManager.setAlarmClock alerts",
+                text = "Exact AlarmManager.setAlarmClock alerts & System Clock alarms",
                 style = MaterialTheme.typography.bodyMedium,
                 color = TextMuted
             )
@@ -375,8 +386,74 @@ fun AlertsScreen(
 
         if (reminders.isEmpty()) {
             item {
-                Box(modifier = Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) {
-                    Text("No active alarms or reminders.", color = TextMuted)
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = CardBg),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            "Why is this empty?",
+                            fontWeight = FontWeight.Bold,
+                            color = Accent,
+                            fontSize = 15.sp
+                        )
+
+                        if (confirmedCount == 0) {
+                            Text(
+                                "• 0 confirmed schedules in database: Confirm an event in the Today or Pending tab to generate alerts.",
+                                color = TextMuted,
+                                fontSize = 13.sp
+                            )
+                        } else {
+                            Text(
+                                "• $confirmedCount confirmed event(s) exist, but no active alerts are scheduled (events may be in the past or time was unspecified).",
+                                color = TextMuted,
+                                fontSize = 13.sp
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("canScheduleExactAlarms:", color = TextLight, fontSize = 13.sp)
+                            Badge(containerColor = if (canScheduleExact) Success else Danger) {
+                                Text(if (canScheduleExact) "GRANTED" else "DENIED", color = Color.White)
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Next Alarm Clock:", color = TextLight, fontSize = 13.sp)
+                            Text(nextAlarmClockStr, color = Primary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        }
+
+                        if (lastError != null) {
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = Color(0x33EF4444)),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp)) {
+                                    Text("⚠️ Last Scheduling Error", color = Danger, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                    Text(
+                                        "${lastError?.api}: ${lastError?.errorMessage}",
+                                        color = TextLight,
+                                        fontSize = 12.sp
+                                    )
+                                    Text("At: ${lastError?.timestamp}", color = TextMuted, fontSize = 11.sp)
+                                }
+                            }
+                        }
+                    }
                 }
             }
         } else {
@@ -391,10 +468,10 @@ fun AlertsScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    text = if (rem.type == "alarm") "⏰ ALARM" else "🔔 REMINDER",
+                                    text = if (rem.type == "alarm") "⏰ ALARM (Ringing)" else "🔔 REMINDER (15m lead)",
                                     fontWeight = FontWeight.Bold,
                                     color = if (rem.type == "alarm") Warning else Accent,
                                     fontSize = 12.sp
@@ -406,6 +483,71 @@ fun AlertsScreen(
 
                         Badge(containerColor = if (rem.status.name == "FIRED") Success else Primary) {
                             Text(rem.status.name, color = Color.White)
+                        }
+                    }
+                }
+            }
+        }
+
+        // Audit Log of Scheduling Attempts
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = CardBg),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        "Scheduling Audit Log (${recentAudits.size} attempts)",
+                        fontWeight = FontWeight.Bold,
+                        color = TextLight,
+                        fontSize = 15.sp
+                    )
+                    Text(
+                        "Every AlarmClock.ACTION_SET_ALARM and setAlarmClock attempt is recorded here.",
+                        color = TextMuted,
+                        fontSize = 12.sp
+                    )
+
+                    if (recentAudits.isEmpty()) {
+                        Text("No scheduling attempts recorded yet.", color = TextMuted, fontSize = 13.sp)
+                    } else {
+                        recentAudits.forEach { audit ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(CardBorder, RoundedCornerShape(8.dp))
+                                    .padding(8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "${audit.api} • ${audit.entityId}",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = TextLight
+                                    )
+                                    Text(
+                                        text = "Trigger: ${audit.triggerTime}",
+                                        fontSize = 11.sp,
+                                        color = TextMuted
+                                    )
+                                    if (!audit.errorMessage.isNullOrBlank()) {
+                                        Text(
+                                            text = "Error: ${audit.errorMessage}",
+                                            fontSize = 11.sp,
+                                            color = Danger
+                                        )
+                                    }
+                                }
+                                Badge(containerColor = if (audit.result == "SUCCESS") Success else Danger) {
+                                    Text(audit.result, color = Color.White, fontSize = 10.sp)
+                                }
+                            }
                         }
                     }
                 }
@@ -571,6 +713,11 @@ fun DiagnosticsScreen(
     val alarmTestRecords by alarmTestsFlow.collectAsState(initial = emptyList())
     val heartbeatsFlow = remember { db.heartbeatLogDao().getAllHeartbeatsFlow() }
     val heartbeats by heartbeatsFlow.collectAsState(initial = emptyList())
+    val scheduler = remember { com.scheduleassistant.app.service.AlarmScheduler(context) }
+    val canScheduleExactAlarms = remember { scheduler.canScheduleExactAlarms() }
+    val nextAlarmClockStr = remember { scheduler.getNextAlarmClockFormatted() }
+    val lastErrorFlow = remember { db.alarmAuditDao().getLastErrorFlow() }
+    val lastSchedulingError by lastErrorFlow.collectAsState(initial = null)
     var testAlarmMinutes by remember { mutableStateOf("1") }
     var testAlarmMessage by remember { mutableStateOf<String?>(null) }
 
@@ -808,15 +955,54 @@ fun DiagnosticsScreen(
 
                     Divider(color = CardBorder)
 
-                    // Count of Scheduled Alarms
+                    // 1. canScheduleExactAlarms Row (Task E)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Scheduled Exact Alarms", color = TextLight, fontSize = 14.sp)
-                            Text("AlarmManager.setAlarmClock (Doze-safe). (needs owner verification)", color = TextMuted, fontSize = 12.sp)
+                            Text("canScheduleExactAlarms", color = TextLight, fontSize = 14.sp)
+                            Text("SCHEDULE_EXACT_ALARM permission. (needs owner verification)", color = TextMuted, fontSize = 12.sp)
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Badge(containerColor = if (canScheduleExactAlarms) Success else Danger) {
+                            Text(if (canScheduleExactAlarms) "GRANTED" else "DENIED", color = Color.White)
+                        }
+                    }
+
+                    Divider(color = CardBorder)
+
+                    // 2. getNextAlarmClock Row (Task E)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("getNextAlarmClock", color = TextLight, fontSize = 14.sp)
+                            Text("Next status bar AlarmClockInfo. (needs owner verification)", color = TextMuted, fontSize = 12.sp)
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = nextAlarmClockStr,
+                            color = if (nextAlarmClockStr != "None") Primary else TextMuted,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 13.sp
+                        )
+                    }
+
+                    Divider(color = CardBorder)
+
+                    // 3. Scheduled Alarm Count Row (Task E)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Scheduled Alarm Count", color = TextLight, fontSize = 14.sp)
+                            Text("Active alarms/reminders. (needs owner verification)", color = TextMuted, fontSize = 12.sp)
                         }
                         Spacer(Modifier.width(8.dp))
                         Text(
@@ -825,6 +1011,29 @@ fun DiagnosticsScreen(
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp
                         )
+                    }
+
+                    Divider(color = CardBorder)
+
+                    // 4. Last Scheduling Error Row (Task E)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Last Scheduling Error", color = TextLight, fontSize = 14.sp)
+                            Text(
+                                if (lastSchedulingError != null) "${lastSchedulingError?.api}: ${lastSchedulingError?.errorMessage}"
+                                else "None recorded. (needs owner verification)",
+                                color = if (lastSchedulingError != null) Danger else TextMuted,
+                                fontSize = 12.sp
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Badge(containerColor = if (lastSchedulingError == null) Success else Danger) {
+                            Text(if (lastSchedulingError == null) "NONE" else "ERROR", color = Color.White)
+                        }
                     }
 
                     Divider(color = CardBorder)
