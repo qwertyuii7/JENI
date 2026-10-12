@@ -123,13 +123,23 @@ class IngestionPipeline(
         val candidates = mutableListOf<ScheduleEntity>()
         if (extraction.type == "cancel" || extraction.type == "reschedule") {
             val targetTitle = (extraction.target?.title ?: extraction.title).lowercase().trim()
+            fun normalizeTitle(t: String): String = t.lowercase()
+                .replace(Regex("(?i)\\b(?:ki|ka|ke)\\b"), " ")
+                .replace(Regex("\\s+"), " ")
+                .trim()
+            val cleanTarget = normalizeTitle(targetTitle)
             val existingSchedules = getProjectedSchedules()
 
             for (sched in existingSchedules.values) {
                 if (sched.status == ScheduleStatus.DISMISSED || sched.status == ScheduleStatus.CANCELLED) continue
                 val sTitle = sched.title.lowercase().trim()
-                val isSynonym = specLoader.intraTypeSynonyms[targetTitle]?.contains(sTitle) == true
-                if (sTitle == targetTitle || sTitle.contains(targetTitle) || targetTitle.contains(sTitle) || isSynonym) {
+                val cleanSched = normalizeTitle(sTitle)
+                val isSynonym = specLoader.intraTypeSynonyms[targetTitle]?.contains(sTitle) == true ||
+                                specLoader.intraTypeSynonyms[cleanTarget]?.contains(cleanSched) == true
+                if (sTitle == targetTitle || cleanSched == cleanTarget ||
+                    sTitle.contains(targetTitle) || targetTitle.contains(sTitle) ||
+                    cleanSched.contains(cleanTarget) || cleanTarget.contains(cleanSched) ||
+                    isSynonym) {
                     candidates.add(sched)
                 }
             }

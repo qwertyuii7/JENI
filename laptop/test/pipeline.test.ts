@@ -116,4 +116,28 @@ describe('Laptop Ingestion Pipeline Tests', () => {
     expect(zeroMatchRes.extraction?.ambiguous).toBe(true);
     expect(zeroMatchRes.candidates?.length).toBe(0);
   });
+
+  it('correctly matches "OS lecture cancelled" against "OS ki lecture" by dropping filler ki/ka/ke', () => {
+    // 1. Initial confirmed event from "kal 9 baje OS ki lecture"
+    const initialRes = pipeline.processMessage('kal 9 baje OS ki lecture', {
+      referenceNow: '2026-10-12T10:00:00+05:30'
+    });
+    expect(initialRes.status).toBe('PENDING');
+    expect(initialRes.extraction?.title).toBe('OS ki lecture');
+    pipeline.confirmSchedule(initialRes.entity_id!);
+
+    // 2. Cancellation: "OS lecture cancelled"
+    const cancelRes = pipeline.processMessage('OS lecture cancelled', {
+      referenceNow: '2026-10-12T12:00:00+05:30'
+    });
+
+    expect(cancelRes.status).toBe('PENDING');
+    expect(cancelRes.extraction?.type).toBe('cancel');
+    expect(cancelRes.extraction?.title).toBe('OS lecture');
+    // Must match the "OS ki lecture" entity
+    expect(cancelRes.extraction?.target?.matched_entity_id).toBe(initialRes.entity_id);
+    expect(cancelRes.candidates?.length).toBe(1);
+    expect(cancelRes.candidates?.[0].id).toBe(initialRes.entity_id);
+    expect(cancelRes.extraction?.ambiguous).toBeFalsy();
+  });
 });

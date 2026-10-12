@@ -398,4 +398,52 @@ class DeviceHardeningRegressionTest {
         assertEquals("sched-physics-123", physCandidates[0].id)
         assertFalse(physCandidates.any { it.title == "chemistry lab" })
     }
+
+    /**
+     * VERIFY ITEM:
+     * Cancel "OS lecture cancelled" matches "OS ki lecture" by dropping filler "ki/ka/ke" before matching.
+     */
+    @Test
+    fun testCancelOSLectureMatchesOSKiLectureByDroppingFiller() {
+        fun normalizeTitle(t: String): String = t.lowercase()
+            .replace(Regex("(?i)\\b(?:ki|ka|ke)\\b"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+
+        val osSchedule = ScheduleEntity(
+            id = "sched-os-789",
+            title = "OS ki lecture",
+            start = "2026-10-13T09:00:00+05:30",
+            status = ScheduleStatus.CONFIRMED,
+            source_quote = "kal 9 baje OS ki lecture",
+            confidence = 0.9,
+            created_at = "2026-10-12T10:00:00+05:30",
+            updated_at = "2026-10-12T10:00:00+05:30"
+        )
+
+        val existingSchedules = listOf(osSchedule)
+
+        val cancelExt = parser.parse("OS lecture cancelled", "2026-10-12T12:00:00+05:30")
+        assertNotNull(cancelExt)
+        assertEquals("cancel", cancelExt!!.type)
+        assertEquals("OS lecture", cancelExt.title)
+
+        val targetTitle = cancelExt.title.lowercase().trim()
+        val cleanTarget = normalizeTitle(targetTitle)
+
+        val candidates = existingSchedules.filter { sched ->
+            val sTitle = sched.title.lowercase().trim()
+            val cleanSched = normalizeTitle(sTitle)
+            val isSynonym = specLoader.intraTypeSynonyms[targetTitle]?.contains(sTitle) == true ||
+                            specLoader.intraTypeSynonyms[cleanTarget]?.contains(cleanSched) == true
+            sTitle == targetTitle || cleanSched == cleanTarget ||
+            sTitle.contains(targetTitle) || targetTitle.contains(sTitle) ||
+            cleanSched.contains(cleanTarget) || cleanTarget.contains(cleanSched) ||
+            isSynonym
+        }
+
+        assertEquals(1, candidates.size)
+        assertEquals("sched-os-789", candidates[0].id)
+        assertEquals("OS ki lecture", candidates[0].title)
+    }
 }

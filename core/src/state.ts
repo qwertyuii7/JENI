@@ -9,6 +9,14 @@ for (const group of Object.values(synonymsSpec)) {
   }
 }
 
+export function normalizeTitleForMatching(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/\b(?:ki|ka|ke)\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export class EventStore {
   private events: SyncEvent[] = [];
   private eventIds = new Set<string>();
@@ -75,22 +83,31 @@ export class EventStore {
   ): ScheduleEntity | null {
     const schedules = this.getDerivedScheduleEntities();
     const normalizedTarget = targetTitle.toLowerCase().trim();
+    const cleanTarget = normalizeTitleForMatching(targetTitle);
 
     // 1. Check exact title and start time match
     for (const entity of schedules.values()) {
       if (entity.status !== 'CONFIRMED' && entity.status !== 'PENDING') continue;
-      if (entity.title.toLowerCase().trim() === normalizedTarget) {
+      const entityTitleNorm = entity.title.toLowerCase().trim();
+      const cleanEntity = normalizeTitleForMatching(entity.title);
+      if (entityTitleNorm === normalizedTarget || cleanEntity === cleanTarget) {
         if (originalStart && entity.start === originalStart) return entity;
         if (originalDate && (entity.start_date === originalDate || entity.start?.startsWith(originalDate))) return entity;
       }
     }
 
     // 2. Check synonym title match
-    const targetSynonyms = INTRA_TYPE_SYNONYMS[normalizedTarget] || [];
+    const targetSynonyms = INTRA_TYPE_SYNONYMS[normalizedTarget] || INTRA_TYPE_SYNONYMS[cleanTarget] || [];
     for (const entity of schedules.values()) {
       if (entity.status !== 'CONFIRMED' && entity.status !== 'PENDING') continue;
       const entityTitleNorm = entity.title.toLowerCase().trim();
-      if (entityTitleNorm === normalizedTarget || targetSynonyms.includes(entityTitleNorm)) {
+      const cleanEntity = normalizeTitleForMatching(entity.title);
+      if (
+        entityTitleNorm === normalizedTarget ||
+        cleanEntity === cleanTarget ||
+        targetSynonyms.includes(entityTitleNorm) ||
+        targetSynonyms.includes(cleanEntity)
+      ) {
         return entity;
       }
     }
@@ -98,7 +115,14 @@ export class EventStore {
     // 3. Substring match
     for (const entity of schedules.values()) {
       if (entity.status !== 'CONFIRMED' && entity.status !== 'PENDING') continue;
-      if (entity.title.toLowerCase().includes(normalizedTarget) || normalizedTarget.includes(entity.title.toLowerCase())) {
+      const entityTitleNorm = entity.title.toLowerCase().trim();
+      const cleanEntity = normalizeTitleForMatching(entity.title);
+      if (
+        entityTitleNorm.includes(normalizedTarget) ||
+        normalizedTarget.includes(entityTitleNorm) ||
+        cleanEntity.includes(cleanTarget) ||
+        cleanTarget.includes(cleanEntity)
+      ) {
         return entity;
       }
     }

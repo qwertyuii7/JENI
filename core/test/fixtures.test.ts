@@ -261,5 +261,43 @@ describe('Core Parser Fixtures Parity Test', () => {
     expect(matchChem!.id).toBe('sched-chem-lab');
     expect(matchChem!.title).toBe('chemistry lab');
   });
+
+  it('correctly matches "OS lecture cancelled" against "OS ki lecture" by dropping filler ki/ka/ke', () => {
+    const store = new EventStore();
+
+    // 1. Initial event from "kal 9 baje OS ki lecture"
+    const parsedInit = parseScheduleMessage('kal 9 baje OS ki lecture', '2026-10-12T10:00:00+05:30');
+    expect(parsedInit).toBeDefined();
+    expect(parsedInit!.title).toBe('OS ki lecture');
+
+    store.addEvent({
+      id: 'ev-os-1',
+      timestamp: '2026-10-12T10:00:00+05:30',
+      device_id: 'phone',
+      type: 'event_extracted',
+      entity_id: 'sched-os-lecture',
+      payload: parsedInit!
+    });
+    store.addEvent({
+      id: 'ev-os-2',
+      timestamp: '2026-10-12T10:01:00+05:30',
+      device_id: 'phone',
+      type: 'event_confirmed',
+      entity_id: 'sched-os-lecture',
+      payload: {}
+    });
+
+    // 2. Cancellation: "OS lecture cancelled"
+    const parsedCancel = parseScheduleMessage('OS lecture cancelled', '2026-10-12T12:00:00+05:30');
+    expect(parsedCancel).toBeDefined();
+    expect(parsedCancel!.type).toBe('cancel');
+    expect(parsedCancel!.title).toBe('OS lecture');
+
+    // 3. Match target in event store
+    const matched = store.matchTargetEntity(parsedCancel!.title);
+    expect(matched).toBeDefined();
+    expect(matched!.id).toBe('sched-os-lecture');
+    expect(matched!.title).toBe('OS ki lecture');
+  });
 });
 

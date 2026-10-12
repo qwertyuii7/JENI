@@ -172,11 +172,17 @@ export class IngestionPipeline {
       const allEvents = this.db.getAllEvents();
       const { schedules } = ProjectionEngine.projectState(allEvents);
       const targetTitle = (extraction.target?.title || extraction.title).toLowerCase().trim();
+      const normalizeTitle = (t: string) => t.toLowerCase().replace(/\b(?:ki|ka|ke)\b/gi, ' ').replace(/\s+/g, ' ').trim();
+      const cleanTarget = normalizeTitle(targetTitle);
 
       for (const sched of schedules.values()) {
         if (sched.status === 'DISMISSED' || sched.status === 'CANCELLED') continue;
         const schedTitle = sched.title.toLowerCase().trim();
-        if (schedTitle === targetTitle || schedTitle.includes(targetTitle) || targetTitle.includes(schedTitle)) {
+        const cleanSched = normalizeTitle(sched.title);
+        if (
+          schedTitle === targetTitle || schedTitle.includes(targetTitle) || targetTitle.includes(schedTitle) ||
+          cleanSched === cleanTarget || cleanSched.includes(cleanTarget) || cleanTarget.includes(cleanSched)
+        ) {
           candidates.push({
             id: sched.id,
             title: sched.title,
