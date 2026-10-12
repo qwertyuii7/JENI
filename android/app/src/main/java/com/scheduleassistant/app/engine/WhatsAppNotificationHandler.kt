@@ -68,6 +68,23 @@ class WhatsAppNotificationHandler(
         }
     }
 
+    fun isSystemNotification(text: String?, title: String? = null): Boolean {
+        val combined = "${title ?: ""} ${text ?: ""}".lowercase()
+        val systemPatterns = listOf(
+            "checking for new messages",
+            "searching for new messages",
+            "backup in progress",
+            "backing up messages",
+            "chat backup",
+            "whatsapp web is currently active",
+            "whatsapp web",
+            "whatsapp desktop is currently active",
+            "whatsapp desktop",
+            "waiting for this message"
+        )
+        return systemPatterns.any { combined.contains(it) }
+    }
+
     /**
      * Extracts WhatsApp messages while filtering summaries, parsing MessagingStyle,
      * stripping group sender prefixes, and deduping.
@@ -87,32 +104,47 @@ class WhatsAppNotificationHandler(
         val isFlagSummary = (notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0
         val isCompatSummary = NotificationCompat.isGroupSummary(notification)
         if (isFlagSummary || isCompatSummary) {
+            DiagnosticsManager.incrementSystemNotificationCount(context)
+            return emptyList()
+        }
+
+        val chatTitle = notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
+        val rawTextSample = notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
+            ?: notification.extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
+
+        // 2. Filter WhatsApp's own internal system notifications (Requirement 5)
+        if (isSystemNotification(rawTextSample, chatTitle)) {
+            DiagnosticsManager.incrementSystemNotificationCount(context)
             return emptyList()
         }
 
         val results = mutableListOf<WhatsAppExtractedMessage>()
-        val chatTitle = notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
 
-        // 2. Parse MessagingStyle if available
+        // 3. Parse MessagingStyle if available
+        // Requirement 5: is_group must come strictly from isGroupConversation, NEVER default true
         val messagingStyle = NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(notification)
-        val isGroup = messagingStyle?.isGroupConversation
-            ?: (chatTitle != null && !chatTitle.matches(Regex("^\\+?\\d[\\d\\s-]{6,}$")))
+        val isGroup = messagingStyle?.isGroupConversation == true
 
         if (messagingStyle != null && messagingStyle.messages.isNotEmpty()) {
             // Process the latest messages in this MessagingStyle conversation
             for (msg in messagingStyle.messages) {
                 val text = msg.text?.toString() ?: continue
                 if (text.isBlank()) continue
+                if (isSystemNotification(text, chatTitle)) {
+                    DiagnosticsManager.incrementSystemNotificationCount(context)
+                    continue
+                }
 
                 val msgSender = msg.person?.name?.toString()
                 val (finalSender, cleanText) = splitSenderPrefix(msgSender, text)
                 val msgTimestamp = if (msg.timestamp > 0L) msg.timestamp else sbn.postTime
 
-                // 3. Deduplicate by (chat, text, post time)
+                // Deduplicate by (chat, text, post time)
                 if (isDeduplicated(chatTitle, cleanText, msgTimestamp)) {
                     continue
                 }
 
+                DiagnosticsManager.incrementChatMessageCount(context)
                 val dedupeKey = "${chatTitle ?: "chat"}|$cleanText|$msgTimestamp"
                 results.add(
                     WhatsAppExtractedMessage(
@@ -133,10 +165,11 @@ class WhatsAppNotificationHandler(
             val bigText = notification.extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
             val text = notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: bigText ?: ""
 
-            if (text.isNotBlank()) {
+            if (text.isNotBlank() && !isSystemNotification(text, chatTitle)) {
                 val (finalSender, cleanText) = splitSenderPrefix(chatTitle, text)
 
                 if (!isDeduplicated(chatTitle, cleanText, sbn.postTime)) {
+                    DiagnosticsManager.incrementChatMessageCount(context)
                     val dedupeKey = "${chatTitle ?: "chat"}|$cleanText|${sbn.postTime}"
                     results.add(
                         WhatsAppExtractedMessage(
@@ -152,6 +185,8 @@ class WhatsAppNotificationHandler(
                         )
                     )
                 }
+            } else if (isSystemNotification(text, chatTitle)) {
+                DiagnosticsManager.incrementSystemNotificationCount(context)
             }
         }
 

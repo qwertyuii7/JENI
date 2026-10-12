@@ -434,6 +434,17 @@ fun AlertsScreen(
                 style = MaterialTheme.typography.bodyMedium,
                 color = TextMuted
             )
+            Spacer(Modifier.height(8.dp))
+            Button(
+                onClick = {
+                    com.scheduleassistant.app.service.AlarmRingingService.stopAll(context)
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Danger),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("🛑 Stop all alarms", color = Color.White, fontWeight = FontWeight.Bold)
+            }
         }
 
         if (reminders.isEmpty()) {
@@ -1186,6 +1197,90 @@ fun DiagnosticsScreen(
                                 Text(label, fontSize = 12.sp, color = if (alarmLead == mins) Color.Black else TextLight)
                             }
                         }
+                    }
+
+                    Divider(color = CardBorder)
+
+                    // Alarm Auto-Stop Timeout (Requirement 2)
+                    var autoStopMin by remember { mutableStateOf(DiagnosticsManager.getAlarmAutoStopMinutes(context)) }
+                    Text("Alarm Auto-Stop Timeout: $autoStopMin min (auto-stops & posts missed notification)", color = Accent, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf(1, 3, 5, 10).forEach { mins ->
+                            Button(
+                                onClick = {
+                                    autoStopMin = mins
+                                    DiagnosticsManager.setAlarmAutoStopMinutes(context, mins)
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (autoStopMin == mins) Primary else CardBorder
+                                )
+                            ) {
+                                Text("${mins}m", fontSize = 12.sp, color = if (autoStopMin == mins) Color.White else TextLight)
+                            }
+                        }
+                    }
+
+                    Divider(color = CardBorder)
+
+                    // Emergency Stop All Alarms (Requirement 2)
+                    Button(
+                        onClick = {
+                            com.scheduleassistant.app.service.AlarmRingingService.stopAll(context)
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Danger),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("🛑 Stop all alarms", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+
+                    Divider(color = CardBorder)
+
+                    // Full-Screen Intent Status & Action (Requirement 3)
+                    val canUseFsi = DiagnosticsManager.canUseFullScreenIntent(context)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Full-Screen Intent (Lockscreen UI)", color = TextLight, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Required to show full-screen when screen locked/off (needs owner verification)", color = TextMuted, fontSize = 11.sp)
+                        }
+                        Badge(containerColor = if (canUseFsi) Success else Danger) {
+                            Text(if (canUseFsi) "ALLOWED" else "BLOCKED", color = Color.White)
+                        }
+                    }
+
+                    if (!canUseFsi && Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                        Button(
+                            onClick = {
+                                val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
+                                    data = android.net.Uri.parse("package:${context.packageName}")
+                                }
+                                context.startActivity(intent)
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Warning),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Open Full-Screen Intent Settings", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+                    }
+
+                    Divider(color = CardBorder)
+
+                    // Next Alarm Clock Info (Requirement 7)
+                    val nextAlarmInfo = DiagnosticsManager.getNextAlarmClockInfo(context)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Next System Alarm Clock:", color = TextLight, fontSize = 13.sp)
+                        Text(nextAlarmInfo, color = Accent, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                     }
                 }
             }

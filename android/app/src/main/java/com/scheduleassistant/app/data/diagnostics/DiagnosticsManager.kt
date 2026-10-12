@@ -2,11 +2,13 @@ package com.scheduleassistant.app.data.diagnostics
 
 import android.app.ActivityManager
 import android.app.ApplicationExitInfo
+import android.app.KeyguardManager
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.os.Build
+import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.FileProvider
@@ -39,6 +41,10 @@ object DiagnosticsManager {
     private const val KEY_ALLOWED_PACKAGES = "allowed_packages"
     private const val KEY_REMINDER_LEAD_MINUTES = "reminder_lead_minutes"
     private const val KEY_ALARM_LEAD_MINUTES = "alarm_lead_minutes"
+    private const val KEY_ALARM_AUTO_STOP_MINUTES = "alarm_auto_stop_minutes"
+    private const val KEY_LAST_LOGGED_EXIT_TIMESTAMP = "last_logged_exit_timestamp"
+    private const val KEY_CHAT_MESSAGES_COUNT = "chat_messages_count"
+    private const val KEY_SYSTEM_NOTIFICATIONS_COUNT = "system_notifications_count"
 
     val DEFAULT_ALLOWED_PACKAGES = setOf("com.whatsapp", "com.whatsapp.w4b")
 
@@ -56,6 +62,34 @@ object DiagnosticsManager {
 
     fun setAlarmLeadTimeMinutes(context: Context, minutes: Int) {
         getPrefs(context).edit().putInt(KEY_ALARM_LEAD_MINUTES, minutes).apply()
+    }
+
+    fun getAlarmAutoStopMinutes(context: Context): Int {
+        return getPrefs(context).getInt(KEY_ALARM_AUTO_STOP_MINUTES, 5)
+    }
+
+    fun setAlarmAutoStopMinutes(context: Context, minutes: Int) {
+        getPrefs(context).edit().putInt(KEY_ALARM_AUTO_STOP_MINUTES, minutes).apply()
+    }
+
+    fun incrementChatMessageCount(context: Context): Int {
+        val current = getChatMessageCount(context) + 1
+        getPrefs(context).edit().putInt(KEY_CHAT_MESSAGES_COUNT, current).apply()
+        return current
+    }
+
+    fun getChatMessageCount(context: Context): Int {
+        return getPrefs(context).getInt(KEY_CHAT_MESSAGES_COUNT, 0)
+    }
+
+    fun incrementSystemNotificationCount(context: Context): Int {
+        val current = getSystemNotificationCount(context) + 1
+        getPrefs(context).edit().putInt(KEY_SYSTEM_NOTIFICATIONS_COUNT, current).apply()
+        return current
+    }
+
+    fun getSystemNotificationCount(context: Context): Int {
+        return getPrefs(context).getInt(KEY_SYSTEM_NOTIFICATIONS_COUNT, 0)
     }
 
     fun canUseFullScreenIntent(context: Context): Boolean {
@@ -171,43 +205,56 @@ object DiagnosticsManager {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                     val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
                     val exitReasons = activityManager?.getHistoricalProcessExitReasons(context.packageName, 0, 10)
+                    val prefs = getPrefs(context)
+                    val lastLoggedExitTimestamp = prefs.getLong(KEY_LAST_LOGGED_EXIT_TIMESTAMP, 0L)
+                    var maxExitTimestamp = lastLoggedExitTimestamp
+
                     exitReasons?.forEach { exitInfo ->
-                        val reasonStr = when (exitInfo.reason) {
-                            ApplicationExitInfo.REASON_ANR -> "REASON_ANR"
-                            ApplicationExitInfo.REASON_CRASH -> "REASON_CRASH"
-                            ApplicationExitInfo.REASON_CRASH_NATIVE -> "REASON_CRASH_NATIVE"
-                            ApplicationExitInfo.REASON_DEPENDENCY_DIED -> "REASON_DEPENDENCY_DIED"
-                            ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE -> "REASON_EXCESSIVE_RESOURCE_USAGE"
-                            ApplicationExitInfo.REASON_EXIT_SELF -> "REASON_EXIT_SELF"
-                            ApplicationExitInfo.REASON_INITIALIZATION_FAILURE -> "REASON_INITIALIZATION_FAILURE"
-                            ApplicationExitInfo.REASON_LOW_MEMORY -> "REASON_LOW_MEMORY"
-                            ApplicationExitInfo.REASON_OTHER -> "REASON_OTHER"
-                            ApplicationExitInfo.REASON_PERMISSION_CHANGE -> "REASON_PERMISSION_CHANGE"
-                            ApplicationExitInfo.REASON_SIGNALED -> "REASON_SIGNALED"
-                            ApplicationExitInfo.REASON_USER_REQUESTED -> "REASON_USER_REQUESTED"
-                            else -> "UNKNOWN (${exitInfo.reason})"
-                        }
+                        // Requirement 6: Dedupe EXIT_INFO heartbeat rows (never log same exit timestamp twice)
+                        if (exitInfo.timestamp > lastLoggedExitTimestamp) {
+                            val reasonStr = when (exitInfo.reason) {
+                                ApplicationExitInfo.REASON_ANR -> "REASON_ANR"
+                                ApplicationExitInfo.REASON_CRASH -> "REASON_CRASH"
+                                ApplicationExitInfo.REASON_CRASH_NATIVE -> "REASON_CRASH_NATIVE"
+                                ApplicationExitInfo.REASON_DEPENDENCY_DIED -> "REASON_DEPENDENCY_DIED"
+                                ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE -> "REASON_EXCESSIVE_RESOURCE_USAGE"
+                                ApplicationExitInfo.REASON_EXIT_SELF -> "REASON_EXIT_SELF"
+                                ApplicationExitInfo.REASON_INITIALIZATION_FAILURE -> "REASON_INITIALIZATION_FAILURE"
+                                ApplicationExitInfo.REASON_LOW_MEMORY -> "REASON_LOW_MEMORY"
+                                ApplicationExitInfo.REASON_OTHER -> "REASON_OTHER"
+                                ApplicationExitInfo.REASON_PERMISSION_CHANGE -> "REASON_PERMISSION_CHANGE"
+                                ApplicationExitInfo.REASON_SIGNALED -> "REASON_SIGNALED"
+                                ApplicationExitInfo.REASON_USER_REQUESTED -> "REASON_USER_REQUESTED"
+                                else -> "UNKNOWN (${exitInfo.reason})"
+                            }
 
-                        val detailsJson = JSONObject().apply {
-                            put("reason_code", exitInfo.reason)
-                            put("reason_name", reasonStr)
-                            put("timestamp", exitInfo.timestamp)
-                            put("timestamp_iso", SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
-                                timeZone = TimeZone.getTimeZone("UTC")
-                            }.format(Date(exitInfo.timestamp)))
-                            put("description", exitInfo.description ?: "")
-                            put("importance", exitInfo.importance)
-                            put("status", exitInfo.status)
-                            put("pss_kb", exitInfo.pss)
-                            put("rss_kb", exitInfo.rss)
-                        }
+                            val detailsJson = JSONObject().apply {
+                                put("reason_code", exitInfo.reason)
+                                put("reason_name", reasonStr)
+                                put("timestamp", exitInfo.timestamp)
+                                put("timestamp_iso", SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+                                    timeZone = TimeZone.getTimeZone("UTC")
+                                }.format(Date(exitInfo.timestamp)))
+                                put("description", exitInfo.description ?: "")
+                                put("importance", exitInfo.importance)
+                                put("status", exitInfo.status)
+                                put("pss_kb", exitInfo.pss)
+                                put("rss_kb", exitInfo.rss)
+                            }
 
-                        recordHeartbeat(
-                            context,
-                            "EXIT_INFO",
-                            detailsJson.toString(),
-                            exitInfo.timestamp
-                        )
+                            recordHeartbeat(
+                                context,
+                                "EXIT_INFO",
+                                detailsJson.toString(),
+                                exitInfo.timestamp
+                            )
+                            if (exitInfo.timestamp > maxExitTimestamp) {
+                                maxExitTimestamp = exitInfo.timestamp
+                            }
+                        }
+                    }
+                    if (maxExitTimestamp > lastLoggedExitTimestamp) {
+                        prefs.edit().putLong(KEY_LAST_LOGGED_EXIT_TIMESTAMP, maxExitTimestamp).apply()
                     }
                 }
             } catch (e: Exception) {
@@ -283,6 +330,25 @@ object DiagnosticsManager {
         return json
     }
 
+    fun getNextAlarmClockInfo(context: Context): String {
+        return try {
+            val am = context.getSystemService(Context.ALARM_SERVICE) as? android.app.AlarmManager
+            val nextAlarm = am?.nextAlarmClock
+            if (nextAlarm != null) {
+                val triggerMs = nextAlarm.triggerTime
+                val iso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+                    timeZone = TimeZone.getTimeZone("UTC")
+                }.format(Date(triggerMs))
+                val pkg = nextAlarm.showIntent?.creatorPackage ?: "unknown"
+                "$iso (pkg: $pkg)"
+            } else {
+                "None"
+            }
+        } catch (e: Exception) {
+            "Error: ${e.message}"
+        }
+    }
+
     suspend fun exportAnonymizedLogsToFile(context: Context): File {
         val db = AppDatabase.getInstance(context)
         val logs = db.diagnosticLogDao().getAllDiagnosticLogs()
@@ -299,7 +365,7 @@ object DiagnosticsManager {
         }
 
         val exportWrapper = JSONObject()
-        exportWrapper.put("export_version", 1)
+        exportWrapper.put("export_version", 2)
         exportWrapper.put("target_device", "Samsung Galaxy A15 5G")
         exportWrapper.put("os_version", "Android 16 / One UI 8.5")
         exportWrapper.put("exported_at", SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
@@ -307,6 +373,58 @@ object DiagnosticsManager {
         }.format(Date()))
         exportWrapper.put("total_records", array.length())
         exportWrapper.put("records", array)
+
+        // Device & Runtime State
+        val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        val km = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+        exportWrapper.put("can_use_full_screen_intent", canUseFullScreenIntent(context))
+        exportWrapper.put("is_interactive", pm?.isInteractive ?: false)
+        exportWrapper.put("is_keyguard_locked", km?.isKeyguardLocked ?: false)
+        exportWrapper.put("next_alarm_clock", getNextAlarmClockInfo(context))
+        exportWrapper.put("chat_messages_count", getChatMessageCount(context))
+        exportWrapper.put("system_notifications_count", getSystemNotificationCount(context))
+        exportWrapper.put("active_ringing_alarms", com.scheduleassistant.app.service.AlarmRingingService.getActiveAlarmsJson())
+
+        // Requirement 4: Event log (type, entity, timestamp, seq, hlc - NO raw text)
+        val events = db.eventDao().getAllEvents()
+        val eventsArray = JSONArray()
+        for (evt in events) {
+            val evtObj = JSONObject()
+            evtObj.put("id", evt.id)
+            evtObj.put("type", evt.type)
+            evtObj.put("entity_id", evt.entityId)
+            evtObj.put("timestamp", evt.timestamp)
+            evtObj.put("seq", evt.seq)
+            evtObj.put("hlc", evt.hlc)
+            eventsArray.put(evtObj)
+        }
+        exportWrapper.put("event_log", eventsArray)
+
+        // Requirement 4: Debug-injection results (prefilter result, parser output, ambiguous flag)
+        val debugInjectionsArray = JSONArray()
+        for (log in logs) {
+            if (log.mode == "DEBUG_INJECT" || log.packageName == "com.scheduleassistant.app.debug") {
+                val diObj = JSONObject()
+                diObj.put("id", log.id)
+                diObj.put("timestamp", log.createdAt)
+                diObj.put("prefilter_result", log.prefilterResult)
+                var isAmbiguous = false
+                if (!log.parserOutput.isNullOrBlank()) {
+                    try {
+                        val parserJson = JSONObject(log.parserOutput!!)
+                        isAmbiguous = parserJson.optBoolean("ambiguous", false)
+                        diObj.put("parser_output", parserJson)
+                    } catch (_: Exception) {
+                        diObj.put("parser_output", log.parserOutput)
+                    }
+                } else {
+                    diObj.put("parser_output", JSONObject.NULL)
+                }
+                diObj.put("ambiguous", isAmbiguous)
+                debugInjectionsArray.put(diObj)
+            }
+        }
+        exportWrapper.put("debug_injections", debugInjectionsArray)
 
         val checkpoints = db.soakCheckpointDao().getAllSoakCheckpoints()
         val checkpointsArray = JSONArray()

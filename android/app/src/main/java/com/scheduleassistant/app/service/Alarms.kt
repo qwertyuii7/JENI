@@ -1,6 +1,7 @@
 package com.scheduleassistant.app.service
 
 import android.app.AlarmManager
+import android.app.KeyguardManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -19,6 +20,7 @@ import com.scheduleassistant.app.data.model.ScheduleStatus
 import com.scheduleassistant.app.data.model.SyncEvent
 import com.scheduleassistant.app.data.projection.ProjectionEngine
 import com.scheduleassistant.app.engine.HlcClock
+import com.scheduleassistant.app.ui.AlarmRingingActivity
 import com.scheduleassistant.app.ui.MainActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -29,6 +31,31 @@ import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 import java.util.UUID
+
+fun parseIsoTimestamp(isoString: String): Long? {
+    val patterns = arrayOf(
+        "yyyy-MM-dd'T'HH:mm:ssXXX",
+        "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
+        "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+        "yyyy-MM-dd'T'HH:mm:ss'Z'",
+        "yyyy-MM-dd'T'HH:mmXXX",
+        "yyyy-MM-dd'T'HH:mm"
+    )
+    for (p in patterns) {
+        try {
+            val df = SimpleDateFormat(p, Locale.US).apply {
+                if (p.endsWith("'Z'")) timeZone = TimeZone.getTimeZone("UTC")
+            }
+            val date = df.parse(isoString)
+            if (date != null) return date.time
+        } catch (_: Exception) {}
+    }
+    return null
+}
+
+fun getAlarmRequestCode(entityId: String, offset: Int = 0): Int {
+    return (entityId.hashCode() and 0x3FFFFFFF) + offset
+}
 
 class AlarmScheduler(private val context: Context) {
 
@@ -95,9 +122,8 @@ class AlarmScheduler(private val context: Context) {
             return false
         }
 
-        val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US)
         val startTime = try {
-            isoFormat.parse(schedule.start!!)?.time ?: return false
+            parseIsoTimestamp(schedule.start!!) ?: return false
         } catch (e: Exception) {
             recordAudit(
                 entityId = schedule.id,
@@ -137,7 +163,7 @@ class AlarmScheduler(private val context: Context) {
 
         val isImmediateReminder = reminderTargetMs <= nowMs
         val reminderScheduled = scheduleAlarmClock(
-            id = schedule.id.hashCode() + 1,
+            id = getAlarmRequestCode(schedule.id, 1),
             triggerMs = effectiveReminderTimeMs,
             title = "🔔 Reminder: ${schedule.title}",
             scheduleId = schedule.id,
@@ -154,7 +180,7 @@ class AlarmScheduler(private val context: Context) {
             }
             val isImmediateAlarm = alarmTargetMs <= nowMs
             scheduleAlarmClock(
-                id = schedule.id.hashCode(),
+                id = getAlarmRequestCode(schedule.id, 2),
                 triggerMs = effectiveAlarmTimeMs,
                 title = "⏰ ALARM: ${schedule.title}",
                 scheduleId = schedule.id,
@@ -170,10 +196,11 @@ class AlarmScheduler(private val context: Context) {
      * Requirement 2: Cancelling an event cancels its old reminder/alarm.
      */
     fun cancelAlertsForSchedule(scheduleId: String) {
-        val id = scheduleId.hashCode()
+        val req1 = getAlarmRequestCode(scheduleId, 1)
+        val req2 = getAlarmRequestCode(scheduleId, 2)
         val alarmIntent = Intent(context, AlarmReceiver::class.java)
-        val p1 = PendingIntent.getBroadcast(context, id, alarmIntent, PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE)
-        val p2 = PendingIntent.getBroadcast(context, id + 1, alarmIntent, PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE)
+        val p1 = PendingIntent.getBroadcast(context, req1, alarmIntent, PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE)
+        val p2 = PendingIntent.getBroadcast(context, req2, alarmIntent, PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE)
         p1?.let { alarmManager.cancel(it) }
         p2?.let { alarmManager.cancel(it) }
 
@@ -246,12 +273,21 @@ class AlarmScheduler(private val context: Context) {
         return try {
             val alarmClockInfo = AlarmManager.AlarmClockInfo(triggerMs, showPendingIntent)
             alarmManager.setAlarmClock(alarmClockInfo, alarmPendingIntent)
+
+            // Requirement 7: Show getNextAlarmClock right after scheduling
+            val nextAlarmStr = DiagnosticsManager.getNextAlarmClockInfo(context)
+            val auditNote = if (isImmediate) {
+                "Lead time was past, scheduled immediately; nextAlarm=$nextAlarmStr"
+            } else {
+                "nextAlarm=$nextAlarmStr"
+            }
+
             recordAudit(
                 entityId = if (type == "alarm") "alarm-$scheduleId" else "rem-$scheduleId",
                 triggerTime = timeStr,
                 api = apiName,
                 result = "SUCCESS",
-                errorMessage = if (isImmediate) "Lead time was past, scheduled immediately" else null
+                errorMessage = auditNote
             )
             true
         } catch (e: SecurityException) {
@@ -445,23 +481,21 @@ class AlarmReceiver : BroadcastReceiver() {
         val type = intent.getStringExtra("EXTRA_TYPE") ?: "alarm"
         val triggerMs = intent.getLongExtra("EXTRA_TRIGGER_MS", System.currentTimeMillis())
 
-        // Requirement 1 & 6: If it is an ALARM, start the audible ringing service (one ringer per id)
-        if (type == "alarm") {
-            if (!AlarmRingingService.isRinging(scheduleId)) {
-                try {
-                    val ringIntent = Intent(context, AlarmRingingService::class.java).apply {
-                        putExtra("EXTRA_TITLE", title)
-                        putExtra("EXTRA_SCHEDULE_ID", scheduleId)
-                        putExtra("EXTRA_IS_TEST", false)
-                    }
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        context.startForegroundService(ringIntent)
-                    } else {
-                        context.startService(ringIntent)
-                    }
-                } catch (_: Exception) {}
-            }
-        }
+        val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        val km = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+        val isInteractive = pm?.isInteractive ?: false
+        val isKeyguardLocked = km?.isKeyguardLocked ?: false
+        val canUseFsi = DiagnosticsManager.canUseFullScreenIntent(context)
+        val fullScreenSet = (type == "alarm")
+
+        // Wake the screen with wakeup flag (Requirement 3)
+        val fireWakeLock = pm?.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP or PowerManager.ON_AFTER_RELEASE,
+            "ScheduleAssistant:AlarmReceiverFireWakeLock"
+        )
+        fireWakeLock?.acquire(30_000L)
+
+        var activityLaunchResult = "N/A"
 
         // Check if missed due to device downtime
         val isMissed = (System.currentTimeMillis() - triggerMs) > 60_000
@@ -472,20 +506,82 @@ class AlarmReceiver : BroadcastReceiver() {
             title
         }
 
-        val openIntent = Intent(context, MainActivity::class.java)
-        val pendingOpen = PendingIntent.getActivity(context, 0, openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        // Requirement 1 & 3: For ALARM, start AlarmRingingService (handles foreground notification)
+        // and launch AlarmRingingActivity directly to wake screen/keyguard.
+        // DO NOT call notificationManager.notify here to prevent duplicate "one popup with two icons" bug.
+        if (type == "alarm") {
+            try {
+                val ringIntent = Intent(context, AlarmRingingService::class.java).apply {
+                    putExtra(AlarmRingingService.EXTRA_TITLE, title)
+                    putExtra(AlarmRingingService.EXTRA_SCHEDULE_ID, scheduleId)
+                    putExtra(AlarmRingingService.EXTRA_TRIGGER_MS, triggerMs)
+                    putExtra(AlarmRingingService.EXTRA_IS_TEST, false)
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(ringIntent)
+                } else {
+                    context.startService(ringIntent)
+                }
+            } catch (e: Exception) {
+                activityLaunchResult = "SERVICE_START_FAILED: ${e.message}"
+            }
 
-        val notification = NotificationCompat.Builder(context, channelId)
-            .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
-            .setContentTitle(displayTitle)
-            .setContentText("Tap to open Schedule Assistant")
-            .setPriority(NotificationCompat.PRIORITY_MAX)
-            .setCategory(NotificationCompat.CATEGORY_ALARM)
-            .setContentIntent(pendingOpen)
-            .setAutoCancel(true)
-            .build()
+            try {
+                val fsiIntent = Intent(context, AlarmRingingActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    putExtra(AlarmRingingService.EXTRA_TITLE, title)
+                    putExtra(AlarmRingingService.EXTRA_SCHEDULE_ID, scheduleId)
+                    putExtra(AlarmRingingService.EXTRA_TRIGGER_MS, triggerMs)
+                }
+                context.startActivity(fsiIntent)
+                activityLaunchResult = "LAUNCHED"
+            } catch (e: Exception) {
+                activityLaunchResult = "ACTIVITY_LAUNCH_FAILED: ${e.message}"
+            }
+        } else {
+            // Reminders: post standard high-importance notification
+            val notifId = getAlarmRequestCode(scheduleId, 1)
+            val openIntent = Intent(context, MainActivity::class.java)
+            val pendingOpen = PendingIntent.getActivity(
+                context,
+                notifId + 50,
+                openIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
 
-        notificationManager.notify(scheduleId.hashCode(), notification)
+            val notification = NotificationCompat.Builder(context, channelId)
+                .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+                .setContentTitle(displayTitle)
+                .setContentText("Tap to open Schedule Assistant")
+                .setPriority(NotificationCompat.PRIORITY_MAX)
+                .setCategory(NotificationCompat.CATEGORY_REMINDER)
+                .setContentIntent(pendingOpen)
+                .setAutoCancel(true)
+                .build()
+
+            notificationManager.notify(notifId, notification)
+        }
+
+        // Audit fire-time metrics (Requirement 3)
+        val fireAuditDetails = JSONObject().apply {
+            put("interactive", isInteractive)
+            put("keyguard_locked", isKeyguardLocked)
+            put("can_use_full_screen_intent", canUseFsi)
+            put("full_screen_set", fullScreenSet)
+            put("activity_launch_result", activityLaunchResult)
+            put("alarm_type", type)
+        }.toString()
+
+        val scheduler = AlarmScheduler(context)
+        scheduler.recordAudit(
+            entityId = if (type == "alarm") "alarm-$scheduleId" else "rem-$scheduleId",
+            triggerTime = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("UTC")
+            }.format(Date(triggerMs)),
+            api = "AlarmReceiver.fire",
+            result = "SUCCESS",
+            errorMessage = fireAuditDetails
+        )
 
         // Record reminder_fired event into Room database
         CoroutineScope(Dispatchers.IO).launch {

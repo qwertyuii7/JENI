@@ -22,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.lifecycleScope
 import com.scheduleassistant.app.data.db.AppDatabase
+import com.scheduleassistant.app.data.db.DiagnosticLogEntity
 import com.scheduleassistant.app.data.db.RawMessageEntity
 import com.scheduleassistant.app.data.db.SyncEventEntity
 import com.scheduleassistant.app.data.model.ExtractionOutput
@@ -54,6 +55,29 @@ enum class AppTab(val title: String) {
     ALERTS("Alerts"),
     DEBUG("Debug"),
     SETTINGS("Settings")
+}
+
+fun SyncEventEntity.toSyncEvent(): SyncEvent {
+    val payloadMap = mutableMapOf<String, Any?>()
+    try {
+        val json = JSONObject(this.payload)
+        val keys = json.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            payloadMap[key] = json.opt(key)
+        }
+    } catch (_: Exception) {}
+
+    return SyncEvent(
+        id = this.id,
+        timestamp = this.timestamp,
+        device_id = this.deviceId,
+        seq = this.seq,
+        hlc = this.hlc,
+        type = this.type,
+        entity_id = this.entityId,
+        payload = payloadMap
+    )
 }
 
 class MainActivity : ComponentActivity() {
@@ -123,28 +147,7 @@ class MainActivity : ComponentActivity() {
 
         // Map entities to domain SyncEvents
         val syncEvents = remember(rawEntities) {
-            rawEntities.map { entity ->
-                val payloadMap = mutableMapOf<String, Any?>()
-                try {
-                    val json = JSONObject(entity.payload)
-                    val keys = json.keys()
-                    while (keys.hasNext()) {
-                        val key = keys.next()
-                        payloadMap[key] = json.opt(key)
-                    }
-                } catch (_: Exception) {}
-
-                SyncEvent(
-                    id = entity.id,
-                    timestamp = entity.timestamp,
-                    device_id = entity.deviceId,
-                    seq = entity.seq,
-                    hlc = entity.hlc,
-                    type = entity.type,
-                    entity_id = entity.entityId,
-                    payload = payloadMap
-                )
-            }
+            rawEntities.map { it.toSyncEvent() }
         }
 
         // Project deterministic state using HLC ordering
@@ -297,7 +300,13 @@ class MainActivity : ComponentActivity() {
             db.eventDao().insertEvent(confirmEntity)
 
             // Trigger alarm schedule for confirmed event
-            val target = projectedState.schedules[id]
+            var target = projectedState.schedules[id]
+            if (target == null) {
+                val allEvents = db.eventDao().getAllEvents().map { it.toSyncEvent() }
+                val projectedFromDb = com.scheduleassistant.app.data.projection.ProjectionEngine.projectState(allEvents)
+                target = projectedFromDb.schedules[id]
+            }
+
             if (target != null) {
                 val updatedTarget = if (customTime != null) {
                     target.copy(status = ScheduleStatus.CONFIRMED, start = customTime, time_unspecified = false)
@@ -307,15 +316,20 @@ class MainActivity : ComponentActivity() {
 
                 // If time is specified, emit reminder_created (and alarm_set if enableAlarm)
                 if (!updatedTarget.time_unspecified && updatedTarget.start != null) {
-                    val startTimeMs = try {
-                        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).parse(updatedTarget.start!!)?.time
-                    } catch (_: Exception) { null }
+                    val startTimeMs = com.scheduleassistant.app.service.parseIsoTimestamp(updatedTarget.start!!)
 
                     if (startTimeMs != null) {
                         val reminderLeadMin = DiagnosticsManager.getReminderLeadTimeMinutes(this@MainActivity)
                         val alarmLeadMin = DiagnosticsManager.getAlarmLeadTimeMinutes(this@MainActivity)
 
-                        val reminderTimeMs = startTimeMs - reminderLeadMin * 60 * 1000L
+                        val reminderTargetMs = startTimeMs - reminderLeadMin * 60 * 1000L
+                        val nowMs = System.currentTimeMillis()
+                        val reminderTimeMs = if (reminderTargetMs > nowMs) {
+                            reminderTargetMs
+                        } else {
+                            nowMs + 1000L // Immediate reminder if lead time is in past
+                        }
+
                         val reminderIso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
                             timeZone = TimeZone.getTimeZone("UTC")
                         }.format(Date(reminderTimeMs))
@@ -339,7 +353,12 @@ class MainActivity : ComponentActivity() {
                         db.eventDao().insertEvent(reminderEntity)
 
                         if (enableAlarm) {
-                            val alarmTimeMs = startTimeMs - alarmLeadMin * 60 * 1000L
+                            val alarmTargetMs = startTimeMs - alarmLeadMin * 60 * 1000L
+                            val alarmTimeMs = if (alarmTargetMs > nowMs) {
+                                alarmTargetMs
+                            } else {
+                                nowMs + 1000L
+                            }
                             val alarmIso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
                                 timeZone = TimeZone.getTimeZone("UTC")
                             }.format(Date(alarmTimeMs))
@@ -372,6 +391,14 @@ class MainActivity : ComponentActivity() {
                 } catch (e: Exception) {
                     android.util.Log.e("MainActivity", "Alarm scheduling failed: ${e.message}", e)
                 }
+            } else {
+                alarmScheduler.recordAudit(
+                    entityId = id,
+                    triggerTime = "UNSPECIFIED",
+                    api = "MainActivity.confirm",
+                    result = "ERROR",
+                    errorMessage = "Schedule entity not found in state or DB"
+                )
             }
         }
     }
@@ -469,13 +496,40 @@ class MainActivity : ComponentActivity() {
             RawMessageEntity(id = rawMsgId, rawText = rawText, source = "debug_inject", createdAt = nowIso)
         )
 
-        // 2. Prefilter & Parse
+        // 2. Prefilter & Parse with local reference time
         val filterRes = prefilter.prefilter(rawText)
-        if (!filterRes.shouldParse) {
+        val localIsoNow = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault()).format(Date())
+        val extraction = if (filterRes.shouldParse) parser.parse(rawText, referenceNow = localIsoNow) else null
+
+        // 3. Log debug injection to diagnostic_logs table (Requirement 4)
+        val diagLog = DiagnosticLogEntity(
+            id = UUID.randomUUID().toString(),
+            createdAt = nowIso,
+            packageName = "com.scheduleassistant.app.debug",
+            chatTitle = "Debug Injection",
+            sender = "Debug User",
+            isGroup = false,
+            rawText = rawText,
+            prefilterResult = if (filterRes.shouldParse) "passed" else (filterRes.reason ?: "rejected"),
+            parserOutput = extraction?.let { ext ->
+                JSONObject().apply {
+                    put("type", ext.type)
+                    put("title", ext.title)
+                    put("start", ext.start)
+                    put("start_date", ext.start_date)
+                    put("time_unspecified", ext.time_unspecified)
+                    put("ambiguous", ext.ambiguous)
+                    put("source_quote", ext.source_quote)
+                    put("confidence", ext.confidence)
+                }.toString()
+            },
+            mode = "DEBUG_INJECT"
+        )
+        db.diagnosticLogDao().insertDiagnosticLog(diagLog)
+
+        if (!filterRes.shouldParse || extraction == null) {
             return@withContext null
         }
-
-        val extraction = parser.parse(rawText) ?: return@withContext null
 
         val entityId = "sched-${UUID.randomUUID()}"
         val nextSeq = db.eventDao().getNextSeq(deviceId)
