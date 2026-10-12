@@ -20,6 +20,14 @@ data class WhatsAppExtractedMessage(
     val dedupeKey: String
 )
 
+data class WhatsAppExtractionDecision(
+    val chatTitle: String?,
+    val isGroup: Boolean,
+    val isAllowlisted: Boolean,
+    val disposition: String, // "skipped: summary", "skipped: own status", "skipped: duplicate", "skipped: not allowlisted", "processed"
+    val message: WhatsAppExtractedMessage? = null
+)
+
 class WhatsAppNotificationHandler(
     private val dedupeCacheSize: Int = 500
 ) {
@@ -86,13 +94,13 @@ class WhatsAppNotificationHandler(
     }
 
     /**
-     * Extracts WhatsApp messages while filtering summaries, parsing MessagingStyle,
-     * stripping group sender prefixes, and deduping.
+     * Processes WhatsApp notifications, enforcing allowlist, filtering system summaries/status,
+     * deduping, and returning fine-grained ingestion decisions for each message/notification.
      */
-    fun extractMessages(
+    fun processNotification(
         context: Context,
         sbn: StatusBarNotification
-    ): List<WhatsAppExtractedMessage> {
+    ): List<WhatsAppExtractionDecision> {
         val allowedPackages = DiagnosticsManager.getAllowedPackages(context)
         if (!allowedPackages.contains(sbn.packageName)) {
             return emptyList()
@@ -100,38 +108,71 @@ class WhatsAppNotificationHandler(
 
         val notification = sbn.notification ?: return emptyList()
 
+        val chatTitle = notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim()
+        val messagingStyle = NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(notification)
+        val isGroup = messagingStyle?.isGroupConversation == true
+        val isAllowlisted = DiagnosticsManager.isChatAllowlisted(context, chatTitle)
+
         // 1. Skip summary notifications (NotificationCompat.isGroupSummary and FLAG_GROUP_SUMMARY)
         val isFlagSummary = (notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0
         val isCompatSummary = NotificationCompat.isGroupSummary(notification)
         if (isFlagSummary || isCompatSummary) {
             DiagnosticsManager.incrementSystemNotificationCount(context)
-            return emptyList()
+            return listOf(
+                WhatsAppExtractionDecision(
+                    chatTitle = chatTitle,
+                    isGroup = isGroup,
+                    isAllowlisted = isAllowlisted,
+                    disposition = "skipped: summary"
+                )
+            )
         }
 
-        val chatTitle = notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
         val rawTextSample = notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
             ?: notification.extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
 
-        // 2. Filter WhatsApp's own internal system notifications (Requirement 5)
+        // 2. Filter WhatsApp's own internal system notifications
         if (isSystemNotification(rawTextSample, chatTitle)) {
             DiagnosticsManager.incrementSystemNotificationCount(context)
-            return emptyList()
+            return listOf(
+                WhatsAppExtractionDecision(
+                    chatTitle = chatTitle,
+                    isGroup = isGroup,
+                    isAllowlisted = isAllowlisted,
+                    disposition = "skipped: own status"
+                )
+            )
         }
 
-        val results = mutableListOf<WhatsAppExtractedMessage>()
+        // 3. Enforce chat allowlist
+        if (!isAllowlisted) {
+            return listOf(
+                WhatsAppExtractionDecision(
+                    chatTitle = chatTitle,
+                    isGroup = isGroup,
+                    isAllowlisted = false,
+                    disposition = "skipped: not allowlisted"
+                )
+            )
+        }
 
-        // 3. Parse MessagingStyle if available
-        // Requirement 5: is_group must come strictly from isGroupConversation, NEVER default true
-        val messagingStyle = NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(notification)
-        val isGroup = messagingStyle?.isGroupConversation == true
+        val decisions = mutableListOf<WhatsAppExtractionDecision>()
 
+        // 4. Parse MessagingStyle if available
         if (messagingStyle != null && messagingStyle.messages.isNotEmpty()) {
-            // Process the latest messages in this MessagingStyle conversation
             for (msg in messagingStyle.messages) {
                 val text = msg.text?.toString() ?: continue
                 if (text.isBlank()) continue
                 if (isSystemNotification(text, chatTitle)) {
                     DiagnosticsManager.incrementSystemNotificationCount(context)
+                    decisions.add(
+                        WhatsAppExtractionDecision(
+                            chatTitle = chatTitle,
+                            isGroup = isGroup,
+                            isAllowlisted = true,
+                            disposition = "skipped: own status"
+                        )
+                    )
                     continue
                 }
 
@@ -141,22 +182,37 @@ class WhatsAppNotificationHandler(
 
                 // Deduplicate by (chat, text, post time)
                 if (isDeduplicated(chatTitle, cleanText, msgTimestamp)) {
+                    decisions.add(
+                        WhatsAppExtractionDecision(
+                            chatTitle = chatTitle,
+                            isGroup = isGroup,
+                            isAllowlisted = true,
+                            disposition = "skipped: duplicate"
+                        )
+                    )
                     continue
                 }
 
                 DiagnosticsManager.incrementChatMessageCount(context)
                 val dedupeKey = "${chatTitle ?: "chat"}|$cleanText|$msgTimestamp"
-                results.add(
-                    WhatsAppExtractedMessage(
-                        packageName = sbn.packageName,
-                        notificationKey = sbn.key,
+                val extracted = WhatsAppExtractedMessage(
+                    packageName = sbn.packageName,
+                    notificationKey = sbn.key,
+                    chatTitle = chatTitle,
+                    sender = finalSender,
+                    rawText = text,
+                    cleanText = cleanText,
+                    isGroup = isGroup,
+                    postTime = msgTimestamp,
+                    dedupeKey = dedupeKey
+                )
+                decisions.add(
+                    WhatsAppExtractionDecision(
                         chatTitle = chatTitle,
-                        sender = finalSender,
-                        rawText = text,
-                        cleanText = cleanText,
                         isGroup = isGroup,
-                        postTime = msgTimestamp,
-                        dedupeKey = dedupeKey
+                        isAllowlisted = true,
+                        disposition = "processed",
+                        message = extracted
                     )
                 )
             }
@@ -168,28 +224,63 @@ class WhatsAppNotificationHandler(
             if (text.isNotBlank() && !isSystemNotification(text, chatTitle)) {
                 val (finalSender, cleanText) = splitSenderPrefix(chatTitle, text)
 
-                if (!isDeduplicated(chatTitle, cleanText, sbn.postTime)) {
+                if (isDeduplicated(chatTitle, cleanText, sbn.postTime)) {
+                    decisions.add(
+                        WhatsAppExtractionDecision(
+                            chatTitle = chatTitle,
+                            isGroup = isGroup,
+                            isAllowlisted = true,
+                            disposition = "skipped: duplicate"
+                        )
+                    )
+                } else {
                     DiagnosticsManager.incrementChatMessageCount(context)
                     val dedupeKey = "${chatTitle ?: "chat"}|$cleanText|${sbn.postTime}"
-                    results.add(
-                        WhatsAppExtractedMessage(
-                            packageName = sbn.packageName,
-                            notificationKey = sbn.key,
+                    val extracted = WhatsAppExtractedMessage(
+                        packageName = sbn.packageName,
+                        notificationKey = sbn.key,
+                        chatTitle = chatTitle,
+                        sender = finalSender,
+                        rawText = text,
+                        cleanText = cleanText,
+                        isGroup = isGroup,
+                        postTime = sbn.postTime,
+                        dedupeKey = dedupeKey
+                    )
+                    decisions.add(
+                        WhatsAppExtractionDecision(
                             chatTitle = chatTitle,
-                            sender = finalSender,
-                            rawText = text,
-                            cleanText = cleanText,
                             isGroup = isGroup,
-                            postTime = sbn.postTime,
-                            dedupeKey = dedupeKey
+                            isAllowlisted = true,
+                            disposition = "processed",
+                            message = extracted
                         )
                     )
                 }
             } else if (isSystemNotification(text, chatTitle)) {
                 DiagnosticsManager.incrementSystemNotificationCount(context)
+                decisions.add(
+                    WhatsAppExtractionDecision(
+                        chatTitle = chatTitle,
+                        isGroup = isGroup,
+                        isAllowlisted = true,
+                        disposition = "skipped: own status"
+                    )
+                )
             }
         }
 
-        return results
+        return decisions
+    }
+
+    /**
+     * Extracts WhatsApp messages while filtering summaries, parsing MessagingStyle,
+     * stripping group sender prefixes, and deduping.
+     */
+    fun extractMessages(
+        context: Context,
+        sbn: StatusBarNotification
+    ): List<WhatsAppExtractedMessage> {
+        return processNotification(context, sbn).mapNotNull { it.message }
     }
 }

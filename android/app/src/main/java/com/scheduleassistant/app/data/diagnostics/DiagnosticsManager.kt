@@ -45,6 +45,10 @@ object DiagnosticsManager {
     private const val KEY_LAST_LOGGED_EXIT_TIMESTAMP = "last_logged_exit_timestamp"
     private const val KEY_CHAT_MESSAGES_COUNT = "chat_messages_count"
     private const val KEY_SYSTEM_NOTIFICATIONS_COUNT = "system_notifications_count"
+    private const val KEY_CAPTURE_ALL_CHATS = "capture_all_chats"
+    private const val KEY_ALLOWED_CHATS = "allowed_chats"
+    private const val KEY_FIRST_RUN_PROMPT_SHOWN = "first_run_prompt_shown"
+    private const val KEY_SCHEDULED_ALERTS = "scheduled_alerts"
 
     val DEFAULT_ALLOWED_PACKAGES = setOf("com.whatsapp", "com.whatsapp.w4b")
 
@@ -90,6 +94,144 @@ object DiagnosticsManager {
 
     fun getSystemNotificationCount(context: Context): Int {
         return getPrefs(context).getInt(KEY_SYSTEM_NOTIFICATIONS_COUNT, 0)
+    }
+
+    fun isFirstRunPromptShown(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_FIRST_RUN_PROMPT_SHOWN, false)
+    }
+
+    fun setFirstRunPromptShown(context: Context, shown: Boolean) {
+        getPrefs(context).edit().putBoolean(KEY_FIRST_RUN_PROMPT_SHOWN, shown).apply()
+    }
+
+    fun isCaptureAllChats(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_CAPTURE_ALL_CHATS, false)
+    }
+
+    fun setCaptureAllChats(context: Context, captureAll: Boolean) {
+        getPrefs(context).edit().putBoolean(KEY_CAPTURE_ALL_CHATS, captureAll).apply()
+    }
+
+    fun getAllowedChats(context: Context): Set<String> {
+        return getPrefs(context).getStringSet(KEY_ALLOWED_CHATS, emptySet()) ?: emptySet()
+    }
+
+    fun setChatAllowed(context: Context, chatTitle: String, allowed: Boolean) {
+        val trimmed = chatTitle.trim()
+        if (trimmed.isEmpty()) return
+        val current = getAllowedChats(context).toMutableSet()
+        if (allowed) {
+            current.add(trimmed)
+        } else {
+            current.remove(trimmed)
+        }
+        getPrefs(context).edit().putStringSet(KEY_ALLOWED_CHATS, current).apply()
+    }
+
+    fun isChatAllowlisted(context: Context, chatTitle: String?): Boolean {
+        if (isCaptureAllChats(context)) return true
+        if (chatTitle.isNullOrBlank()) return false
+        return getAllowedChats(context).contains(chatTitle.trim())
+    }
+
+    data class ScheduledAlertRecord(
+        val scheduleId: String,
+        val type: String, // "Reminder" or "Alarm"
+        val title: String,
+        val triggerMs: Long
+    )
+
+    private val scheduledAlertsMap = java.util.concurrent.ConcurrentHashMap<String, ScheduledAlertRecord>()
+    private var alertsLoaded = false
+
+    private fun loadScheduledAlertsIfNeeded(context: Context) {
+        if (alertsLoaded) return
+        alertsLoaded = true
+        try {
+            val jsonStr = getPrefs(context).getString(KEY_SCHEDULED_ALERTS, null) ?: return
+            val arr = JSONArray(jsonStr)
+            val now = System.currentTimeMillis()
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                val triggerMs = obj.getLong("triggerMs")
+                if (triggerMs > now - 60000L) {
+                    val rec = ScheduledAlertRecord(
+                        scheduleId = obj.getString("scheduleId"),
+                        type = obj.getString("type"),
+                        title = obj.getString("title"),
+                        triggerMs = triggerMs
+                    )
+                    scheduledAlertsMap[rec.scheduleId + "_" + rec.type] = rec
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun saveScheduledAlerts(context: Context) {
+        try {
+            val now = System.currentTimeMillis()
+            val arr = JSONArray()
+            for (rec in scheduledAlertsMap.values) {
+                if (rec.triggerMs > now - 60000L) {
+                    val obj = JSONObject().apply {
+                        put("scheduleId", rec.scheduleId)
+                        put("type", rec.type)
+                        put("title", rec.title)
+                        put("triggerMs", rec.triggerMs)
+                    }
+                    arr.put(obj)
+                }
+            }
+            getPrefs(context).edit().putString(KEY_SCHEDULED_ALERTS, arr.toString()).apply()
+        } catch (_: Exception) {}
+    }
+
+    fun registerScheduledAlert(
+        context: Context,
+        scheduleId: String,
+        type: String,
+        title: String,
+        triggerMs: Long
+    ) {
+        loadScheduledAlertsIfNeeded(context)
+        val rec = ScheduledAlertRecord(scheduleId, type, title, triggerMs)
+        scheduledAlertsMap[scheduleId + "_" + type] = rec
+        saveScheduledAlerts(context)
+    }
+
+    fun unregisterScheduledAlerts(context: Context, scheduleId: String) {
+        loadScheduledAlertsIfNeeded(context)
+        val toRemove = scheduledAlertsMap.keys.filter { it.startsWith(scheduleId) }
+        toRemove.forEach { scheduledAlertsMap.remove(it) }
+        saveScheduledAlerts(context)
+    }
+
+    fun getActiveScheduledCount(context: Context): Int {
+        loadScheduledAlertsIfNeeded(context)
+        val now = System.currentTimeMillis()
+        return scheduledAlertsMap.values.count { it.triggerMs > now }
+    }
+
+    fun getNextAlarmClockLabel(context: Context): String {
+        return try {
+            val am = context.getSystemService(Context.ALARM_SERVICE) as? android.app.AlarmManager
+            val nextAlarm = am?.nextAlarmClock ?: return "None"
+            val triggerMs = nextAlarm.triggerTime
+            val df = SimpleDateFormat("EEE, MMM d, h:mm a", Locale.US)
+            val timeStr = df.format(Date(triggerMs))
+
+            loadScheduledAlertsIfNeeded(context)
+            val matched = scheduledAlertsMap.values.minByOrNull { Math.abs(it.triggerMs - triggerMs) }
+            if (matched != null && Math.abs(matched.triggerMs - triggerMs) <= 3000L) {
+                val label = if (matched.type.contains("alarm", ignoreCase = true)) "Alarm" else "Reminder"
+                "$label: ${matched.title} ($timeStr)"
+            } else {
+                val pkg = nextAlarm.showIntent?.creatorPackage ?: "system"
+                "Alarm ($pkg): $timeStr"
+            }
+        } catch (e: Exception) {
+            "Error: ${e.message}"
+        }
     }
 
     fun canUseFullScreenIntent(context: Context): Boolean {
@@ -271,21 +413,21 @@ object DiagnosticsManager {
         getPrefs(context).edit().putStringSet(KEY_ALLOWED_PACKAGES, packages).apply()
     }
 
+    val phoneRegex = Regex("(?i)\\b(\\+?\\d{1,3}[- .]?)?\\(?\\d{3,5}\\)?[- .]?\\d{3,5}[- .]?\\d{3,5}\\b|\\b\\d{10,12}\\b")
+
+    fun getPseudonym(originalName: String?, namePseudonymMap: MutableMap<String, String>): String? {
+        if (originalName.isNullOrBlank()) return null
+        val trimmed = originalName.trim()
+        return namePseudonymMap.getOrPut(trimmed) {
+            "[PERSON_${namePseudonymMap.size + 1}]"
+        }
+    }
+
     // Anonymization Engine for Log Export
     fun anonymizeLogEntry(
         entry: DiagnosticLogEntity,
         namePseudonymMap: MutableMap<String, String>
     ): JSONObject {
-        fun getPseudonym(originalName: String?): String? {
-            if (originalName.isNullOrBlank()) return null
-            val trimmed = originalName.trim()
-            return namePseudonymMap.getOrPut(trimmed) {
-                "[PERSON_${namePseudonymMap.size + 1}]"
-            }
-        }
-
-        // Phone number regex: international + national formats
-        val phoneRegex = Regex("(?i)\\b(\\+?\\d{1,3}[- .]?)?\\(?\\d{3,5}\\)?[- .]?\\d{3,5}[- .]?\\d{3,5}\\b|\\b\\d{10,12}\\b")
 
         var anonymizedText = entry.rawText
         // 1. Mask phone numbers
@@ -293,7 +435,7 @@ object DiagnosticsManager {
 
         // 2. Mask sender if present in text
         if (!entry.sender.isNullOrBlank()) {
-            val pseudoSender = getPseudonym(entry.sender) ?: "[PERSON]"
+            val pseudoSender = getPseudonym(entry.sender, namePseudonymMap) ?: "[PERSON]"
             anonymizedText = anonymizedText.replace(entry.sender!!, pseudoSender)
         }
 
@@ -305,8 +447,8 @@ object DiagnosticsManager {
         val shape = JSONObject()
         shape.put("package_name", entry.packageName)
         shape.put("is_group", entry.isGroup)
-        shape.put("sender_pseudonym", getPseudonym(entry.sender))
-        shape.put("chat_pseudonym", if (entry.isGroup) getPseudonym(entry.chatTitle) else "[DIRECT_CHAT]")
+        shape.put("sender_pseudonym", getPseudonym(entry.sender, namePseudonymMap))
+        shape.put("chat_pseudonym", if (entry.isGroup) getPseudonym(entry.chatTitle, namePseudonymMap) else "[DIRECT_CHAT]")
         json.put("notification_shape", shape)
 
         json.put("anonymized_text", anonymizedText)
@@ -491,6 +633,39 @@ object DiagnosticsManager {
             auditsArray.put(aObj)
         }
         exportWrapper.put("alarm_audit_logs", auditsArray)
+
+        // Requirement 3: Export Ingestion Decisions (group/DM, allowlisted or not, disposition, prefilter, parser - NO raw text)
+        val decisions = db.ingestionDecisionDao().getRecentDecisions(500)
+        val decisionsArray = JSONArray()
+        for (d in decisions) {
+            val dObj = JSONObject()
+            dObj.put("id", d.id)
+            dObj.put("timestamp", d.timestamp)
+            dObj.put("package_name", d.packageName)
+            dObj.put("chat_title", getPseudonym(d.chatTitle, nameMap))
+            dObj.put("is_group", d.isGroup)
+            dObj.put("is_allowlisted", d.isAllowlisted)
+            dObj.put("disposition", d.disposition)
+            dObj.put("prefilter_result", d.prefilterResult ?: JSONObject.NULL)
+            if (!d.parserOutput.isNullOrBlank()) {
+                try {
+                    val pJson = JSONObject(d.parserOutput)
+                    if (pJson.has("title")) {
+                        pJson.put("title", phoneRegex.replace(pJson.getString("title"), "[PHONE_MASKED]"))
+                    }
+                    dObj.put("parser_output", pJson)
+                } catch (_: Exception) {
+                    dObj.put("parser_output", d.parserOutput)
+                }
+            } else {
+                dObj.put("parser_output", JSONObject.NULL)
+            }
+            decisionsArray.put(dObj)
+        }
+        exportWrapper.put("ingestion_decisions", decisionsArray)
+        exportWrapper.put("next_alarm_clock_label", getNextAlarmClockLabel(context))
+        exportWrapper.put("scheduled_count", getActiveScheduledCount(context))
+        exportWrapper.put("capture_all_chats", isCaptureAllChats(context))
 
         file.writeText(exportWrapper.toString(2))
         return file

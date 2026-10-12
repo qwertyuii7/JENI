@@ -74,9 +74,11 @@ class AlarmScheduler(private val context: Context) {
     }
 
     fun getNextAlarmClockFormatted(): String {
-        val next = alarmManager.nextAlarmClock ?: return "None"
-        val df = SimpleDateFormat("EEE, MMM d, h:mm a", Locale.US)
-        return df.format(Date(next.triggerTime))
+        return DiagnosticsManager.getNextAlarmClockLabel(context)
+    }
+
+    fun getActiveScheduledCount(): Int {
+        return DiagnosticsManager.getActiveScheduledCount(context)
     }
 
     fun recordAudit(
@@ -205,6 +207,7 @@ class AlarmScheduler(private val context: Context) {
         p2?.let { alarmManager.cancel(it) }
 
         AlarmRingingService.stopRinging(context, scheduleId)
+        DiagnosticsManager.unregisterScheduledAlerts(context, scheduleId)
 
         recordAudit(
             entityId = scheduleId,
@@ -273,6 +276,10 @@ class AlarmScheduler(private val context: Context) {
         return try {
             val alarmClockInfo = AlarmManager.AlarmClockInfo(triggerMs, showPendingIntent)
             alarmManager.setAlarmClock(alarmClockInfo, alarmPendingIntent)
+
+            val alertType = if (type == "alarm") "Alarm" else "Reminder"
+            val cleanTitle = title.replace(Regex("^[🔔⏰]\\s*(Reminder:|ALARM:)?\\s*"), "").trim()
+            DiagnosticsManager.registerScheduledAlert(context, scheduleId, alertType, cleanTitle, triggerMs)
 
             // Requirement 7: Show getNextAlarmClock right after scheduling
             val nextAlarmStr = DiagnosticsManager.getNextAlarmClockInfo(context)

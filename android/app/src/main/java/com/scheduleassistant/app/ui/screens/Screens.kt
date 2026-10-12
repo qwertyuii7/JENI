@@ -18,6 +18,7 @@ import com.scheduleassistant.app.data.db.AppDatabase
 import com.scheduleassistant.app.data.db.SoakCheckpointEntity
 import com.scheduleassistant.app.data.diagnostics.DiagnosticsManager
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -53,9 +54,52 @@ fun HomeScreen(
     val context = LocalContext.current
     val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
     val isIgnoringBatteryOptimizations = powerManager.isIgnoringBatteryOptimizations(context.packageName)
+    var isLogOnlyMode by remember { mutableStateOf(DiagnosticsManager.isLogOnlyMode(context)) }
+    val canUseFsi = DiagnosticsManager.canUseFullScreenIntent(context)
+    var showFirstRunPrompt by remember { mutableStateOf(!DiagnosticsManager.isFirstRunPromptShown(context)) }
 
     val pendingCount = schedules.count { it.status == ScheduleStatus.PENDING }
     val confirmedCount = schedules.count { it.status == ScheduleStatus.CONFIRMED }
+
+    if (showFirstRunPrompt) {
+        AlertDialog(
+            onDismissRequest = {
+                DiagnosticsManager.setFirstRunPromptShown(context, true)
+                showFirstRunPrompt = false
+            },
+            title = {
+                Text("Log-Only Mode Active", color = TextLight, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Text(
+                    "Log-Only mode is enabled by default after installation.\n\n" +
+                    "While Log-Only mode is ON, Schedule Assistant captures and evaluates WhatsApp notifications for diagnostic audit, but will NOT create alerts or ring alarms.\n\n" +
+                    "You can disable Log-Only mode anytime in Diagnostics & Soak Audit.",
+                    color = TextMuted,
+                    fontSize = 14.sp
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    DiagnosticsManager.setFirstRunPromptShown(context, true)
+                    showFirstRunPrompt = false
+                }) {
+                    Text("Got It", color = Primary)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    DiagnosticsManager.setFirstRunPromptShown(context, true)
+                    DiagnosticsManager.setLogOnlyMode(context, false)
+                    isLogOnlyMode = false
+                    showFirstRunPrompt = false
+                }) {
+                    Text("Turn OFF", color = TextMuted)
+                }
+            },
+            containerColor = CardBg
+        )
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -76,6 +120,74 @@ fun HomeScreen(
                 style = MaterialTheme.typography.bodyMedium,
                 color = TextMuted
             )
+        }
+
+        // Persistent Log-Only Banner
+        if (isLogOnlyMode) {
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color(0x33F59E0B)),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Info, contentDescription = null, tint = Warning)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Log-only ON: no alerts will be created", color = Warning, fontWeight = FontWeight.Bold)
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Inbound WhatsApp messages will be analyzed and logged for diagnostics, but no alerts or alarms will be created.",
+                            color = TextLight,
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+            }
+        }
+
+        // Full-Screen Intent Warning Banner
+        if (!canUseFsi) {
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color(0x33EF4444)),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Warning, contentDescription = null, tint = Danger)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Full-Screen Alarms Not Allowed", color = Danger, fontWeight = FontWeight.Bold)
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Android requires full-screen intent permission so alarms can wake the screen and display ringing UI over the lockscreen.",
+                            color = TextLight,
+                            fontSize = 13.sp
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Button(
+                            onClick = {
+                                val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                                    Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
+                                        data = Uri.parse("package:${context.packageName}")
+                                    }
+                                } else {
+                                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                        data = Uri.parse("package:${context.packageName}")
+                                    }
+                                }
+                                context.startActivity(intent)
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Danger)
+                        ) {
+                            Text("Enable Full-Screen Intent", color = Color.White)
+                        }
+                    }
+                }
+            }
         }
 
         // Requirement 4: Visible warning when notification listener is down
@@ -746,14 +858,25 @@ fun DiagnosticsScreen(
     val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    // Requirement 2: Dynamically re-read battery optimization on every resume (never assume persisted after reboot)
+    // Requirement 2 & 4: Dynamically re-read live state on resume and periodically while visible
     var isIgnoringBatteryOptimizations by remember {
         mutableStateOf(powerManager.isIgnoringBatteryOptimizations(context.packageName))
     }
+    var refreshTick by remember { mutableStateOf(0) }
+
+    // Requirement 4: Periodic live refresh while visible (every 1.5s)
+    LaunchedEffect(Unit) {
+        while (isActive) {
+            kotlinx.coroutines.delay(1500)
+            refreshTick++
+        }
+    }
+
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 isIgnoringBatteryOptimizations = powerManager.isIgnoringBatteryOptimizations(context.packageName)
+                refreshTick++
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -777,15 +900,22 @@ fun DiagnosticsScreen(
     val heartbeatsFlow = remember { db.heartbeatLogDao().getAllHeartbeatsFlow() }
     val heartbeats by heartbeatsFlow.collectAsState(initial = emptyList())
     val scheduler = remember { com.scheduleassistant.app.service.AlarmScheduler(context) }
-    val canScheduleExactAlarms = remember { scheduler.canScheduleExactAlarms() }
-    val nextAlarmClockStr = remember { scheduler.getNextAlarmClockFormatted() }
+    val canScheduleExactAlarms = remember(refreshTick) { scheduler.canScheduleExactAlarms() }
+    val nextAlarmClockStr = remember(refreshTick) { scheduler.getNextAlarmClockFormatted() }
+    val liveScheduledCount = remember(refreshTick) { scheduler.getActiveScheduledCount() }
+    val canUseFullScreen = remember(refreshTick) { DiagnosticsManager.canUseFullScreenIntent(context) }
+    var captureAllChats by remember(refreshTick) { mutableStateOf(DiagnosticsManager.isCaptureAllChats(context)) }
+    val cutoff24h = remember(refreshTick) { System.currentTimeMillis() - 24 * 60 * 60 * 1000L }
+    val decisionsFlow = remember(cutoff24h) { db.ingestionDecisionDao().getDecisionsSinceFlow(cutoff24h) }
+    val decisions24h by decisionsFlow.collectAsState(initial = emptyList())
+    var allowedChats by remember(refreshTick) { mutableStateOf(DiagnosticsManager.getAllowedChats(context)) }
     val lastErrorFlow = remember { db.alarmAuditDao().getLastErrorFlow() }
     val lastSchedulingError by lastErrorFlow.collectAsState(initial = null)
     var testAlarmMinutes by remember { mutableStateOf("1") }
     var testAlarmMessage by remember { mutableStateOf<String?>(null) }
 
-    val lastNotificationTime = remember { DiagnosticsManager.getLastNotificationReceivedTime(context) }
-    val lastBootTime = remember { DiagnosticsManager.getLastBootRecoveryTime(context) }
+    val lastNotificationTime = remember(refreshTick) { DiagnosticsManager.getLastNotificationReceivedTime(context) }
+    val lastBootTime = remember(refreshTick) { DiagnosticsManager.getLastBootRecoveryTime(context) }
 
     val isListenerAccessGranted = NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
 
@@ -1018,8 +1148,7 @@ fun DiagnosticsScreen(
 
                     Divider(color = CardBorder)
 
-                    // Full-Screen Intent Allowed Row (Requirement 6)
-                    val canUseFullScreen = remember { DiagnosticsManager.canUseFullScreenIntent(context) }
+                    // Full-Screen Intent Allowed Row (Requirement 6 & Item 4)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1030,8 +1159,31 @@ fun DiagnosticsScreen(
                             Text("Survives lockscreen & DND for alarm ringing UI. (needs owner verification)", color = TextMuted, fontSize = 12.sp)
                         }
                         Spacer(Modifier.width(8.dp))
-                        Badge(containerColor = if (canUseFullScreen) Success else Warning) {
-                            Text(if (canUseFullScreen) "ALLOWED" else "BLOCKED", color = Color.White)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Badge(containerColor = if (canUseFullScreen) Success else Danger) {
+                                Text(if (canUseFullScreen) "ALLOWED" else "BLOCKED", color = Color.White)
+                            }
+                            if (!canUseFullScreen) {
+                                Spacer(Modifier.width(6.dp))
+                                Button(
+                                    onClick = {
+                                        val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                                            Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
+                                                data = Uri.parse("package:${context.packageName}")
+                                            }
+                                        } else {
+                                            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                                data = Uri.parse("package:${context.packageName}")
+                                            }
+                                        }
+                                        context.startActivity(intent)
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Danger),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Text("Fix", color = Color.White, fontSize = 11.sp)
+                                }
+                            }
                         }
                     }
 
@@ -1055,7 +1207,7 @@ fun DiagnosticsScreen(
 
                     Divider(color = CardBorder)
 
-                    // 2. getNextAlarmClock Row (Task E)
+                    // 2. getNextAlarmClock Row (Task E & Item 4: labelled reminder vs alarm)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1063,7 +1215,7 @@ fun DiagnosticsScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text("getNextAlarmClock", color = TextLight, fontSize = 14.sp)
-                            Text("Next status bar AlarmClockInfo. (needs owner verification)", color = TextMuted, fontSize = 12.sp)
+                            Text("Next alarm clock (reminder vs alarm). (needs owner verification)", color = TextMuted, fontSize = 12.sp)
                         }
                         Spacer(Modifier.width(8.dp))
                         Text(
@@ -1076,7 +1228,7 @@ fun DiagnosticsScreen(
 
                     Divider(color = CardBorder)
 
-                    // 3. Scheduled Alarm Count Row (Task E)
+                    // 3. Scheduled Alarm Count Row (Task E & Item 4)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1088,7 +1240,7 @@ fun DiagnosticsScreen(
                         }
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            text = "$scheduledAlarmsCount active",
+                            text = "$liveScheduledCount active",
                             color = Primary,
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp
@@ -1136,6 +1288,191 @@ fun DiagnosticsScreen(
                             color = TextLight,
                             fontSize = 13.sp
                         )
+                    }
+                }
+            }
+        }
+
+        // Chat Allowlist & Ingestion Decisions Card (Requirement 3)
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = CardBg),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Chat Allowlist & Ingestion Decisions (24h)", fontWeight = FontWeight.Bold, color = TextLight, fontSize = 16.sp)
+                            Text("Enforces allowlist on real WhatsApp ingestion. (needs owner verification)", color = TextMuted, fontSize = 12.sp)
+                        }
+                        Badge(containerColor = if (captureAllChats) Warning else Primary) {
+                            Text(if (captureAllChats) "CAPTURE ALL" else "STRICT", color = Color.White)
+                        }
+                    }
+
+                    // Test option: "capture all chats" (default OFF)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Capture All Chats (Test Option)", color = TextLight, fontSize = 14.sp)
+                            Text(
+                                if (captureAllChats) "Test mode ON: Accepts notifications from all chats. (needs owner verification)"
+                                else "Default OFF: Only allowlisted chats are processed. (needs owner verification)",
+                                color = TextMuted,
+                                fontSize = 12.sp
+                            )
+                        }
+                        Switch(
+                            checked = captureAllChats,
+                            onCheckedChange = { checked ->
+                                captureAllChats = checked
+                                DiagnosticsManager.setCaptureAllChats(context, checked)
+                            }
+                        )
+                    }
+
+                    Divider(color = CardBorder)
+
+                    // 24h Ingestion Summary stats
+                    val totalDecisions = decisions24h.size
+                    val processedCount = decisions24h.count { it.disposition == "processed" }
+                    val notAllowlistedCount = decisions24h.count { it.disposition.contains("not allowlisted") }
+                    val summaryCount = decisions24h.count { it.disposition.contains("summary") }
+                    val ownStatusCount = decisions24h.count { it.disposition.contains("own status") }
+                    val dupCount = decisions24h.count { it.disposition.contains("duplicate") }
+
+                    Text("Ingestion Stats (Last 24h): $totalDecisions notifications", fontWeight = FontWeight.SemiBold, color = Accent, fontSize = 13.sp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Surface(color = Color(0x3310B981), shape = RoundedCornerShape(6.dp), modifier = Modifier.weight(1f)) {
+                            Column(Modifier.padding(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("$processedCount", fontWeight = FontWeight.Bold, color = Success, fontSize = 13.sp)
+                                Text("Processed", color = TextMuted, fontSize = 10.sp)
+                            }
+                        }
+                        Surface(color = Color(0x33EF4444), shape = RoundedCornerShape(6.dp), modifier = Modifier.weight(1f)) {
+                            Column(Modifier.padding(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("$notAllowlistedCount", fontWeight = FontWeight.Bold, color = Danger, fontSize = 13.sp)
+                                Text("Blocked", color = TextMuted, fontSize = 10.sp)
+                            }
+                        }
+                        Surface(color = Color(0x336B7280), shape = RoundedCornerShape(6.dp), modifier = Modifier.weight(1f)) {
+                            Column(Modifier.padding(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("${summaryCount + ownStatusCount + dupCount}", fontWeight = FontWeight.Bold, color = TextLight, fontSize = 13.sp)
+                                Text("Skipped", color = TextMuted, fontSize = 10.sp)
+                            }
+                        }
+                    }
+
+                    Divider(color = CardBorder)
+
+                    // Chats seen in the last 24h with allowed/blocked state
+                    val seenChats = decisions24h
+                        .filter { !it.chatTitle.isNullOrBlank() }
+                        .groupBy { it.chatTitle!!.trim() }
+                        .map { (title, decs) ->
+                            val isGroup = decs.any { it.isGroup }
+                            val count = decs.size
+                            Triple(title, isGroup, count)
+                        }
+
+                    Text("Chats Seen in Last 24h (${seenChats.size}):", fontWeight = FontWeight.SemiBold, color = TextLight, fontSize = 13.sp)
+
+                    if (seenChats.isEmpty()) {
+                        Text(
+                            "No WhatsApp chats observed in last 24h. Once WhatsApp messages arrive, chats will appear here with Allow/Block toggles. (needs owner verification)",
+                            color = TextMuted,
+                            fontSize = 12.sp
+                        )
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            seenChats.forEach { (title, isGroup, count) ->
+                                val isAllowed = allowedChats.contains(title)
+                                Surface(
+                                    color = Color(0x33000000),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(10.dp).fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                Badge(containerColor = if (isGroup) Color(0xFF6366F1) else Color(0xFF3B82F6)) {
+                                                    Text(if (isGroup) "GROUP" else "DM", color = Color.White, fontSize = 9.sp)
+                                                }
+                                                Text(title, fontWeight = FontWeight.SemiBold, color = TextLight, fontSize = 13.sp, maxLines = 1)
+                                            }
+                                            Text("$count msgs in 24h • ${if (isAllowed || captureAllChats) "Allowlisted" else "Blocked"}", color = TextMuted, fontSize = 11.sp)
+                                        }
+                                        Spacer(Modifier.width(8.dp))
+                                        Button(
+                                            onClick = {
+                                                val newStatus = !isAllowed
+                                                DiagnosticsManager.setChatAllowed(context, title, newStatus)
+                                                allowedChats = DiagnosticsManager.getAllowedChats(context)
+                                            },
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = if (isAllowed) Danger else Success
+                                            ),
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                        ) {
+                                            Text(if (isAllowed) "Block" else "Allow", color = Color.White, fontSize = 11.sp)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Recent Decision Log Entries (last 5)
+                    if (decisions24h.isNotEmpty()) {
+                        Divider(color = CardBorder)
+                        Text("Recent Ingestion Decisions:", fontWeight = FontWeight.SemiBold, color = TextLight, fontSize = 13.sp)
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            decisions24h.take(5).forEach { dec ->
+                                Surface(
+                                    color = Color(0x22FFFFFF),
+                                    shape = RoundedCornerShape(6.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(6.dp).fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = "${dec.disposition} • ${if (dec.isGroup) "Group" else "DM"}",
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (dec.disposition == "processed") Success else if (dec.disposition.contains("not allowlisted")) Danger else TextMuted,
+                                                fontSize = 11.sp
+                                            )
+                                            Text(
+                                                text = "${dec.chatTitle?.take(20) ?: "Unknown"} • ${dec.timestamp.take(19).replace("T", " ")}",
+                                                color = TextMuted,
+                                                fontSize = 10.sp
+                                            )
+                                        }
+                                        Badge(containerColor = if (dec.isAllowlisted) Success else Danger) {
+                                            Text(if (dec.isAllowlisted) "ALLOWED" else "BLOCKED", color = Color.White, fontSize = 8.sp)
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

@@ -169,7 +169,7 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
         if (!whatsAppHandler.isWhatsAppPackage(sbn.packageName)) return
 
         // Process through WhatsAppNotificationHandler
-        val extractedMessages = whatsAppHandler.extractMessages(applicationContext, sbn)
+        val decisions = whatsAppHandler.processNotification(applicationContext, sbn)
 
         // Log heartbeat onNotificationPosted for allowlisted WhatsApp package only
         serviceScope.launch {
@@ -182,7 +182,7 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
             )
         }
 
-        if (extractedMessages.isEmpty()) return
+        if (decisions.isEmpty()) return
 
         // Update last notification received time in diagnostics
         DiagnosticsManager.recordNotificationReceived(applicationContext, sbn.postTime)
@@ -196,87 +196,107 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
 
             val db = AppDatabase.getInstance(applicationContext)
 
-            for (msg in extractedMessages) {
-                val filterResult = prefilter.prefilter(msg.cleanText)
-                val extraction = if (filterResult.shouldParse) parser.parse(msg.cleanText) else null
+            for (dec in decisions) {
+                var prefilterResult: String? = null
+                var parserOutputJson: String? = null
 
-                val parserOutputJson = extraction?.let { ext ->
-                    JSONObject().apply {
-                        put("type", ext.type)
-                        put("title", ext.title)
-                        put("start", ext.start)
-                        put("start_date", ext.start_date)
-                        put("time_unspecified", ext.time_unspecified)
-                        put("ambiguous", ext.ambiguous)
-                        put("confidence", ext.confidence)
-                        put("source_quote", ext.source_quote)
-                    }.toString()
-                }
+                if (dec.disposition == "processed" && dec.message != null) {
+                    val msg = dec.message
+                    val filterResult = prefilter.prefilter(msg.cleanText)
+                    prefilterResult = if (filterResult.shouldParse) "passed" else (filterResult.reason ?: "rejected")
+                    val extraction = if (filterResult.shouldParse) parser.parse(msg.cleanText) else null
 
-                // Record diagnostic log shape + parser output
-                val diagLog = DiagnosticLogEntity(
-                    id = UUID.randomUUID().toString(),
-                    createdAt = nowIso,
-                    packageName = msg.packageName,
-                    chatTitle = msg.chatTitle,
-                    sender = msg.sender,
-                    isGroup = msg.isGroup,
-                    rawText = msg.rawText,
-                    prefilterResult = if (filterResult.shouldParse) "passed" else (filterResult.reason ?: "rejected"),
-                    parserOutput = parserOutputJson,
-                    mode = if (isLogOnly) "LOG_ONLY" else "NORMAL"
-                )
-                db.diagnosticLogDao().insertDiagnosticLog(diagLog)
-
-                // Requirement 2: Log-only mode creates NO pending events or alarms
-                if (isLogOnly) {
-                    continue
-                }
-
-                // Normal Mode: persist raw message and ingest through pipeline
-                val rawMsgId = "raw-${UUID.randomUUID()}"
-                db.rawMessageDao().insertRawMessage(
-                    RawMessageEntity(id = rawMsgId, rawText = msg.rawText, source = "whatsapp", createdAt = nowIso)
-                )
-
-                val result = pipeline.processMessage(msg.cleanText)
-
-                if (result.status == "PENDING" && result.entityId != null) {
-                    val nextSeq = db.eventDao().getNextSeq("android-phone")
-                    val hlcNow = HlcClock("android-phone").now()
-
-                    val payloadJson = JSONObject().apply {
-                        put("type", result.extraction?.type)
-                        put("title", result.extraction?.title)
-                        put("start", result.extraction?.start)
-                        put("start_date", result.extraction?.start_date)
-                        put("time_unspecified", result.extraction?.time_unspecified)
-                        put("ambiguous", result.extraction?.ambiguous)
-                        put("source_quote", result.extraction?.source_quote)
-                        put("confidence", result.extraction?.confidence)
-                        put("raw_text", msg.rawText)
-                        put("raw_message_id", rawMsgId)
-                        put("sender", msg.sender)
-                        put("chat_title", msg.chatTitle)
+                    parserOutputJson = extraction?.let { ext ->
+                        JSONObject().apply {
+                            put("type", ext.type)
+                            put("title", ext.title)
+                            put("start", ext.start)
+                            put("start_date", ext.start_date)
+                            put("time_unspecified", ext.time_unspecified)
+                            put("ambiguous", ext.ambiguous)
+                            put("confidence", ext.confidence)
+                            put("source_quote", ext.source_quote)
+                        }.toString()
                     }
 
-                    val eventEntity = SyncEventEntity(
+                    // Record diagnostic log shape + parser output
+                    val diagLog = DiagnosticLogEntity(
                         id = UUID.randomUUID().toString(),
-                        timestamp = nowIso,
-                        deviceId = "android-phone",
-                        seq = nextSeq,
-                        hlc = hlcNow,
-                        type = "event_extracted",
-                        entityId = result.entityId,
-                        payload = payloadJson.toString()
+                        createdAt = nowIso,
+                        packageName = msg.packageName,
+                        chatTitle = msg.chatTitle,
+                        sender = msg.sender,
+                        isGroup = msg.isGroup,
+                        rawText = msg.rawText,
+                        prefilterResult = prefilterResult,
+                        parserOutput = parserOutputJson,
+                        mode = if (isLogOnly) "LOG_ONLY" else "NORMAL"
                     )
-                    db.eventDao().insertEvent(eventEntity)
+                    db.diagnosticLogDao().insertDiagnosticLog(diagLog)
 
-                    showNotificationAlert(
-                        "New Schedule Found: ${result.extraction?.title}",
-                        "Tap to review & confirm: \"${result.extraction?.source_quote}\""
-                    )
+                    // Requirement 2: Log-only mode creates NO pending events or alarms
+                    if (!isLogOnly) {
+                        // Normal Mode: persist raw message and ingest through pipeline
+                        val rawMsgId = "raw-${UUID.randomUUID()}"
+                        db.rawMessageDao().insertRawMessage(
+                            RawMessageEntity(id = rawMsgId, rawText = msg.rawText, source = "whatsapp", createdAt = nowIso)
+                        )
+
+                        val result = pipeline.processMessage(msg.cleanText)
+
+                        if (result.status == "PENDING" && result.entityId != null) {
+                            val nextSeq = db.eventDao().getNextSeq("android-phone")
+                            val hlcNow = HlcClock("android-phone").now()
+
+                            val payloadJson = JSONObject().apply {
+                                put("type", result.extraction?.type)
+                                put("title", result.extraction?.title)
+                                put("start", result.extraction?.start)
+                                put("start_date", result.extraction?.start_date)
+                                put("time_unspecified", result.extraction?.time_unspecified)
+                                put("ambiguous", result.extraction?.ambiguous)
+                                put("source_quote", result.extraction?.source_quote)
+                                put("confidence", result.extraction?.confidence)
+                                put("raw_text", msg.rawText)
+                                put("raw_message_id", rawMsgId)
+                                put("sender", msg.sender)
+                                put("chat_title", msg.chatTitle)
+                            }
+
+                            val eventEntity = SyncEventEntity(
+                                id = UUID.randomUUID().toString(),
+                                timestamp = nowIso,
+                                deviceId = "android-phone",
+                                seq = nextSeq,
+                                hlc = hlcNow,
+                                type = "event_extracted",
+                                entityId = result.entityId,
+                                payload = payloadJson.toString()
+                            )
+                            db.eventDao().insertEvent(eventEntity)
+
+                            showNotificationAlert(
+                                title = "New Schedule: ${result.extraction?.title}",
+                                message = "${result.extraction?.start ?: result.extraction?.start_date ?: "Pending"} - Tap to review"
+                            )
+                        }
+                    }
                 }
+
+                // Requirement 3: Record Ingestion Decision Log for EVERY notification from WhatsApp packages
+                val ingestionDecision = com.scheduleassistant.app.data.db.IngestionDecisionEntity(
+                    id = UUID.randomUUID().toString(),
+                    timestamp = nowIso,
+                    timestampMs = sbn.postTime,
+                    packageName = sbn.packageName,
+                    chatTitle = dec.chatTitle,
+                    isGroup = dec.isGroup,
+                    isAllowlisted = dec.isAllowlisted,
+                    disposition = dec.disposition,
+                    prefilterResult = prefilterResult,
+                    parserOutput = parserOutputJson
+                )
+                db.ingestionDecisionDao().insertDecision(ingestionDecision)
             }
         }
     }

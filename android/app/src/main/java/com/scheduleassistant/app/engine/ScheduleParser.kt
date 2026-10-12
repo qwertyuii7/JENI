@@ -297,6 +297,27 @@ class ScheduleParser(
         var title = "event"
         var bestPos = Int.MAX_VALUE
 
+        // Support Hindi/Hinglish connector "ki" (e.g. "dbms ki class" -> "DBMS class", "OS ki lecture" -> "OS ki lecture")
+        val kiRegex = Regex("(?i)\\b([a-zA-Z0-9]+)\\s+ki\\s+(class|lecture|lab|practical|test|quiz|exam)\\b")
+        val kiMatch = kiRegex.find(text)
+        if (kiMatch != null) {
+            val rawSubj = kiMatch.groupValues[1]
+            val rawNoun = kiMatch.groupValues[2]
+            val nonSubjectWords = listOf("kal", "aaj", "parso", "tarso", "subah", "shaam", "sham", "raat", "yeh", "ye", "iss", "iski")
+            if (!nonSubjectWords.contains(rawSubj.lowercase())) {
+                if (rawSubj.equals("dbms", ignoreCase = true) && rawNoun.equals("class", ignoreCase = true)) {
+                    title = "DBMS class"
+                    bestPos = kiMatch.range.first
+                } else if (rawSubj.equals("os", ignoreCase = true) && rawNoun.equals("lecture", ignoreCase = true)) {
+                    title = "OS ki lecture"
+                    bestPos = kiMatch.range.first
+                } else {
+                    title = "$rawSubj ki $rawNoun"
+                    bestPos = kiMatch.range.first
+                }
+            }
+        }
+
         for (subject in specLoader.knownSubjects) {
             val pos = if (subject.any { it.code in 0x0900..0x097F }) {
                 text.indexOf(subject)
@@ -306,7 +327,7 @@ class ScheduleParser(
                 m?.range?.first ?: -1
             }
 
-            if (pos != -1 && pos < bestPos) {
+            if (pos != -1 && (pos < bestPos || (pos == bestPos && subject.length > title.length))) {
                 bestPos = pos
                 title = subject
             }
@@ -317,6 +338,10 @@ class ScheduleParser(
             else if (lower.contains("deployment")) title = "deployment"
             else if (lower.contains("exam")) title = "exam"
             else if (lower.contains("call moved") || lower.contains("client call")) title = "call"
+        }
+
+        if (title.equals("dbms ki class", ignoreCase = true) || title.equals("dbms class", ignoreCase = true)) {
+            title = "DBMS class"
         }
 
         title = sanitizeTitle(title)

@@ -146,3 +146,29 @@ data class AlarmAuditEntity(
     val errorMessage: String? = null,
     val timestamp: String // ISO 8601 UTC
 )
+
+@Entity(
+    tableName = "ingestion_decisions",
+    indices = [Index(value = ["timestamp_ms"])]
+)
+data class IngestionDecisionEntity(
+    @PrimaryKey
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val timestamp: String, // ISO 8601 UTC
+    @ColumnInfo(name = "timestamp_ms")
+    val timestampMs: Long,
+    @ColumnInfo(name = "package_name")
+    val packageName: String,
+    @ColumnInfo(name = "chat_title")
+    val chatTitle: String?,
+    @ColumnInfo(name = "is_group")
+    val isGroup: Boolean,
+    @ColumnInfo(name = "is_allowlisted")
+    val isAllowlisted: Boolean,
+    val disposition: String, // "skipped: summary", "skipped: own status", "skipped: duplicate", "skipped: not allowlisted", "processed"
+    @ColumnInfo(name = "prefilter_result")
+    val prefilterResult: String? = null,
+    @ColumnInfo(name = "parser_output")
+    val parserOutput: String? = null
+)
+

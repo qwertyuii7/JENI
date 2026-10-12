@@ -194,4 +194,72 @@ describe('Core Parser Fixtures Parity Test', () => {
     expect(updatedEntity!.start).toBe('2026-10-19T14:00:00+05:30');
     expect(updatedEntity!.status).toBe('CONFIRMED');
   });
+
+  it('verifies cancel/reschedule target matching does not merge physics lab with chemistry lab', () => {
+    const store = new EventStore('test-device');
+
+    // 1. Add Chemistry Lab entity
+    store.addEvent({
+      id: 'ev-chem-1',
+      timestamp: '2026-10-12T10:00:00+05:30',
+      device_id: 'phone',
+      type: 'event_extracted',
+      entity_id: 'sched-chem-lab',
+      payload: {
+        type: 'new',
+        title: 'chemistry lab',
+        start: '2026-10-13T10:00:00+05:30',
+        source_quote: 'chemistry lab',
+        confidence: 0.95
+      }
+    });
+    store.addEvent({
+      id: 'ev-chem-2',
+      timestamp: '2026-10-12T10:01:00+05:30',
+      device_id: 'phone',
+      type: 'event_confirmed',
+      entity_id: 'sched-chem-lab',
+      payload: {}
+    });
+
+    // When only Chemistry Lab exists, targeting Physics Lab must return null (NEVER merge with Chemistry Lab)
+    const matchBeforePhys = store.matchTargetEntity('physics lab');
+    expect(matchBeforePhys).toBeNull();
+
+    // 2. Add Physics Lab entity
+    store.addEvent({
+      id: 'ev-phys-1',
+      timestamp: '2026-10-12T10:05:00+05:30',
+      device_id: 'phone',
+      type: 'event_extracted',
+      entity_id: 'sched-phys-lab',
+      payload: {
+        type: 'new',
+        title: 'physics lab',
+        start: '2026-10-13T18:00:00+05:30',
+        source_quote: 'physics lab',
+        confidence: 0.95
+      }
+    });
+    store.addEvent({
+      id: 'ev-phys-2',
+      timestamp: '2026-10-12T10:06:00+05:30',
+      device_id: 'phone',
+      type: 'event_confirmed',
+      entity_id: 'sched-phys-lab',
+      payload: {}
+    });
+
+    // When both exist:
+    const matchPhys = store.matchTargetEntity('physics lab');
+    expect(matchPhys).toBeDefined();
+    expect(matchPhys!.id).toBe('sched-phys-lab');
+    expect(matchPhys!.title).toBe('physics lab');
+
+    const matchChem = store.matchTargetEntity('chemistry lab');
+    expect(matchChem).toBeDefined();
+    expect(matchChem!.id).toBe('sched-chem-lab');
+    expect(matchChem!.title).toBe('chemistry lab');
+  });
 });
+

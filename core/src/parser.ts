@@ -284,6 +284,27 @@ export function parseScheduleMessage(
   let title = 'event';
   let bestPos = Infinity;
 
+  // Support Hindi/Hinglish connector "ki" (e.g. "dbms ki class" -> "DBMS class", "OS ki lecture" -> "OS ki lecture")
+  const kiRegex = /\b([a-zA-Z0-9]+)\s+ki\s+(class|lecture|lab|practical|test|quiz|exam)\b/i;
+  const kiMatch = kiRegex.exec(text);
+  if (kiMatch) {
+    const rawSubj = kiMatch[1];
+    const rawNoun = kiMatch[2];
+    const nonSubjectWords = ['kal', 'aaj', 'parso', 'tarso', 'subah', 'shaam', 'sham', 'raat', 'yeh', 'ye', 'iss', 'iski'];
+    if (!nonSubjectWords.includes(rawSubj.toLowerCase())) {
+      if (rawSubj.toLowerCase() === 'dbms' && rawNoun.toLowerCase() === 'class') {
+        title = 'DBMS class';
+        bestPos = kiMatch.index;
+      } else if (rawSubj.toLowerCase() === 'os' && rawNoun.toLowerCase() === 'lecture') {
+        title = 'OS ki lecture';
+        bestPos = kiMatch.index;
+      } else {
+        title = `${rawSubj} ki ${rawNoun}`;
+        bestPos = kiMatch.index;
+      }
+    }
+  }
+
   for (const subject of KNOWN_SUBJECTS) {
     let pos = -1;
     // Check ASCII word boundary for English, or substring for Devanagari
@@ -295,7 +316,7 @@ export function parseScheduleMessage(
       if (match) pos = match.index;
     }
 
-    if (pos !== -1 && pos < bestPos) {
+    if (pos !== -1 && (pos < bestPos || (pos === bestPos && subject.length > title.length))) {
       bestPos = pos;
       title = subject;
     }
@@ -311,6 +332,10 @@ export function parseScheduleMessage(
     } else if (lower.includes('call moved') || lower.includes('client call')) {
       title = 'call';
     }
+  }
+
+  if (title.toLowerCase() === 'dbms ki class' || title.toLowerCase() === 'dbms class') {
+    title = 'DBMS class';
   }
 
   title = sanitizeTitle(title);

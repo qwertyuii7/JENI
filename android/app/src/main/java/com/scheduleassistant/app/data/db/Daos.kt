@@ -138,4 +138,23 @@ interface AlarmAuditDao {
     suspend fun getAllAudits(): List<AlarmAuditEntity>
 }
 
+@Dao
+interface IngestionDecisionDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertDecision(decision: IngestionDecisionEntity): Long
+
+    @Query("SELECT * FROM ingestion_decisions ORDER BY timestamp_ms DESC LIMIT :limit")
+    suspend fun getRecentDecisions(limit: Int = 500): List<IngestionDecisionEntity>
+
+    @Query("SELECT * FROM ingestion_decisions WHERE timestamp_ms >= :cutoff ORDER BY timestamp_ms DESC")
+    suspend fun getDecisionsSince(cutoff: Long): List<IngestionDecisionEntity>
+
+    @Query("SELECT * FROM ingestion_decisions WHERE timestamp_ms >= :cutoff ORDER BY timestamp_ms DESC")
+    fun getDecisionsSinceFlow(cutoff: Long): Flow<List<IngestionDecisionEntity>>
+
+    @Query("SELECT COUNT(*) FROM ingestion_decisions")
+    suspend fun getDecisionCount(): Int
+}
+
+
 

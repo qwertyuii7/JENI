@@ -291,4 +291,111 @@ class DeviceHardeningRegressionTest {
         logExitInfo(nextExitTimestamp)
         assertEquals(2, loggedHeartbeats.size)
     }
+
+    /**
+     * VERIFY ITEM:
+     * "Checking for new messages" and other internal WhatsApp status notifications are skipped.
+     */
+    @Test
+    fun testVerifyWhatsAppCheckingForNewMessagesSkipped() {
+        assertTrue(whatsAppHandler.isSystemNotification("Checking for new messages"))
+        assertTrue(whatsAppHandler.isSystemNotification("Searching for new messages"))
+        assertTrue(whatsAppHandler.isSystemNotification(null, "Checking for new messages"))
+        assertTrue(whatsAppHandler.isSystemNotification("WhatsApp Web is currently active"))
+        assertTrue(whatsAppHandler.isSystemNotification("Chat backup in progress"))
+
+        assertFalse(whatsAppHandler.isSystemNotification("kal 6 baje physics lab hai"))
+        assertFalse(whatsAppHandler.isSystemNotification("dbms ki class hai"))
+        assertFalse(whatsAppHandler.isSystemNotification("Rahul: chemistry practical tomorrow"))
+    }
+
+    /**
+     * VERIFY ITEM:
+     * is_group comes strictly from conversation info (MessagingStyle.isGroupConversation).
+     */
+    @Test
+    fun testVerifyIsGroupFromConversationInfo() {
+        fun resolveIsGroup(messagingStyleIsGroup: Boolean?): Boolean {
+            return messagingStyleIsGroup == true
+        }
+
+        assertFalse("1-on-1 contact message with no messagingStyle must be is_group=false", resolveIsGroup(null))
+        assertFalse("1-on-1 contact message with isGroupConversation=false must be is_group=false", resolveIsGroup(false))
+        assertTrue("Group conversation with isGroupConversation=true must be is_group=true", resolveIsGroup(true))
+    }
+
+    /**
+     * VERIFY ITEM 1:
+     * Title extraction retains subject nouns ("physics lab", "DBMS class", "chemistry practical", "OS ki lecture").
+     */
+    @Test
+    fun testSubjectRetentionInTitleExtraction() {
+        val refNow = "2026-10-12T10:00:00+05:30"
+
+        val ext1 = parser.parse("kal 6 baje physics lab hai", refNow)
+        assertNotNull(ext1)
+        assertEquals("physics lab", ext1!!.title)
+
+        val ext2 = parser.parse("kal 4 baje dbms ki class hai", refNow)
+        assertNotNull(ext2)
+        assertEquals("DBMS class", ext2!!.title)
+
+        val ext3 = parser.parse("kal 2 baje chemistry practical hai", refNow)
+        assertNotNull(ext3)
+        assertEquals("chemistry practical", ext3!!.title)
+
+        val ext4 = parser.parse("kal 3 baje OS ki lecture hai", refNow)
+        assertNotNull(ext4)
+        assertEquals("OS ki lecture", ext4!!.title)
+    }
+
+    /**
+     * VERIFY ITEM 1:
+     * Cancel/reschedule matching does not merge "physics lab" with "chemistry lab".
+     */
+    @Test
+    fun testCancelRescheduleMatchingDoesNotMergePhysicsLabWithChemistryLab() {
+        val physicsSchedule = ScheduleEntity(
+            id = "sched-physics-123",
+            title = "physics lab",
+            start = "2026-10-13T18:00:00+05:30",
+            status = ScheduleStatus.CONFIRMED,
+            source_quote = "physics lab",
+            confidence = 0.9,
+            created_at = "2026-10-12T10:00:00+05:30",
+            updated_at = "2026-10-12T10:00:00+05:30"
+        )
+
+        val chemistrySchedule = ScheduleEntity(
+            id = "sched-chem-456",
+            title = "chemistry lab",
+            start = "2026-10-13T14:00:00+05:30",
+            status = ScheduleStatus.CONFIRMED,
+            source_quote = "chemistry lab",
+            confidence = 0.9,
+            created_at = "2026-10-12T10:00:00+05:30",
+            updated_at = "2026-10-12T10:00:00+05:30"
+        )
+
+        val existingSchedules = listOf(physicsSchedule, chemistrySchedule)
+
+        fun findCandidates(targetTitle: String): List<ScheduleEntity> {
+            val tLower = targetTitle.lowercase().trim()
+            return existingSchedules.filter { sched ->
+                val sTitle = sched.title.lowercase().trim()
+                val isSynonym = specLoader.intraTypeSynonyms[tLower]?.contains(sTitle) == true
+                sTitle == tLower || sTitle.contains(tLower) || tLower.contains(sTitle) || isSynonym
+            }
+        }
+
+        val chemCandidates = findCandidates("chemistry lab")
+        assertEquals(1, chemCandidates.size)
+        assertEquals("sched-chem-456", chemCandidates[0].id)
+        assertFalse(chemCandidates.any { it.title == "physics lab" })
+
+        val physCandidates = findCandidates("physics lab")
+        assertEquals(1, physCandidates.size)
+        assertEquals("sched-physics-123", physCandidates[0].id)
+        assertFalse(physCandidates.any { it.title == "chemistry lab" })
+    }
 }

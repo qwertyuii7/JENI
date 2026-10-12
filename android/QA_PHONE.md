@@ -113,6 +113,29 @@ Launch **Schedule Assistant** -> tap **Diagnostics** tab (bottom right) and veri
 - [ ] **Automatic Heartbeat Log**: Append-only log automatically records ticks on process start (`Application.onCreate`) + `ApplicationExitInfo`, listener connect/disconnect, WhatsApp notifications only (count only), service lifecycle, boot, and 15 min WorkManager aggregate ticks (needs owner verification)
 - [ ] **ApplicationExitInfo Historical Reasons**: Previous process exit reasons with timestamps automatically logged on process start (needs owner verification)
 
+### Device Testing Fixes (Galaxy A15 5G):
+- [ ] **Title Extraction Subject Retention**:
+  - "kal 6 baje physics lab hai" -> extracts title `"physics lab"` (needs owner verification)
+  - "dbms ki class hai" -> extracts title `"DBMS class"` (needs owner verification)
+  - "chemistry practical" -> extracts title `"chemistry practical"` (needs owner verification)
+  - "OS ki lecture" -> extracts title `"OS ki lecture"` (needs owner verification)
+  - Cancel/reschedule matching does not merge "physics lab" with "chemistry lab" (needs owner verification)
+- [ ] **Log-Only Home Visibility & First-Run Prompt**:
+  - Fresh install defaults to Log-only mode ON (needs owner verification)
+  - Persistent Home banner displayed: "Log-only ON: no alerts will be created" (needs owner verification)
+  - First-run explanation dialog shown on first app launch explaining suppression of real notification alerts (needs owner verification)
+- [ ] **Allowlist Enforcement & Ingestion Decision Log**:
+  - Diagnostics lists all WhatsApp chats seen in the last 24h with allowed/blocked state (needs owner verification)
+  - Per-chat Allow/Block toggles update allowlist dynamically (needs owner verification)
+  - "Capture all chats" test toggle (default OFF) allows testing all chats without allowlisting (needs owner verification)
+  - Ingestion decision log records every notification: group vs DM, allowlisted or not, disposition (`skipped: own status/summary/duplicate/not allowlisted` or `processed` with prefilter and parser outputs) (needs owner verification)
+  - Included in JSON export with no raw text beyond existing anonymized field (needs owner verification)
+- [ ] **Live Diagnostics Refresh & Full-Screen Intent Warning**:
+  - Diagnostics rows refresh live on resume, after scheduling calls, and periodically every 1.5s while visible (needs owner verification)
+  - `getNextAlarmClock` displays label (Reminder vs Alarm) and target time (needs owner verification)
+  - Scheduled count reflects active alarms/reminders (needs owner verification)
+  - `canUseFullScreenIntent()` queried live via `NotificationManager`. When blocked, shows warning on Home with button opening `ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT` (needs owner verification)
+
 ---
 
 ## 3. Dedicated 48-Hour Soak Test Cases
