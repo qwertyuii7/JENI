@@ -16,8 +16,9 @@ data class ProjectedState(
 object ProjectionEngine {
 
     fun projectState(events: List<SyncEvent>): ProjectedState {
-        val schedules = mutableMapOf<String, ScheduleEntity>()
-        val reminders = mutableMapOf<String, ReminderEntity>()
+        val schedulesInternal = mutableMapOf<String, ScheduleEntity>()
+        val remindersInternal = mutableMapOf<String, ReminderEntity>()
+        val deletedAtHlc = mutableMapOf<String, String>()
 
         // 1. Deduplicate by event id
         val seen = HashSet<String>()
@@ -34,6 +35,7 @@ object ProjectionEngine {
         }
 
         for (ev in unique) {
+            val hlc = ev.hlc
             when (ev.type) {
                 "event_extracted" -> {
                     val title = ev.payload["title"] as? String ?: "event"
@@ -45,7 +47,7 @@ object ProjectionEngine {
                     val rawText = ev.payload["raw_text"] as? String
                     val conf = (ev.payload["confidence"] as? Number)?.toDouble() ?: 0.85
 
-                    schedules[ev.entity_id] = ScheduleEntity(
+                    schedulesInternal[ev.entity_id] = ScheduleEntity(
                         id = ev.entity_id,
                         title = title,
                         start = start,
@@ -53,6 +55,8 @@ object ProjectionEngine {
                         time_unspecified = timeUnspecified,
                         ambiguous = ambiguous,
                         status = ScheduleStatus.PENDING,
+                        deleted = false,
+                        has_alarm = false,
                         source_quote = quote,
                         raw_text = rawText,
                         confidence = conf,
@@ -62,7 +66,7 @@ object ProjectionEngine {
                 }
 
                 "event_confirmed" -> {
-                    val s = schedules[ev.entity_id]
+                    val s = schedulesInternal[ev.entity_id]
                     if (s != null) {
                         s.status = ScheduleStatus.CONFIRMED
                         s.ambiguous = false
@@ -76,7 +80,7 @@ object ProjectionEngine {
                 }
 
                 "event_dismissed" -> {
-                    val s = schedules[ev.entity_id]
+                    val s = schedulesInternal[ev.entity_id]
                     if (s != null) {
                         s.status = ScheduleStatus.DISMISSED
                         s.updated_at = ev.timestamp
@@ -84,7 +88,7 @@ object ProjectionEngine {
                 }
 
                 "event_cancelled" -> {
-                    val s = schedules[ev.entity_id]
+                    val s = schedulesInternal[ev.entity_id]
                     if (s != null) {
                         s.status = ScheduleStatus.CANCELLED
                         s.updated_at = ev.timestamp
@@ -92,7 +96,7 @@ object ProjectionEngine {
                 }
 
                 "event_rescheduled" -> {
-                    val s = schedules[ev.entity_id]
+                    val s = schedulesInternal[ev.entity_id]
                     if (s != null) {
                         val newStart = ev.payload["start"] as? String
                         if (newStart != null) {
@@ -103,13 +107,57 @@ object ProjectionEngine {
                     }
                 }
 
+                "schedule_edited" -> {
+                    val s = schedulesInternal[ev.entity_id]
+                    if (s != null) {
+                        val newTitle = ev.payload["title"] as? String
+                        if (newTitle != null) s.title = newTitle
+                        val newStart = ev.payload["start"] as? String
+                        if (newStart != null) {
+                            s.start = newStart
+                            s.time_unspecified = false
+                        }
+                        val hasAlarm = ev.payload["has_alarm"] as? Boolean
+                        if (hasAlarm != null) {
+                            s.has_alarm = hasAlarm
+                        }
+                        s.updated_at = ev.timestamp
+                    }
+                }
+
+                "schedule_deleted" -> {
+                    val curDel = deletedAtHlc[ev.entity_id]
+                    if (curDel == null || HlcClock.compare(hlc, ev.device_id, curDel, "") >= 0) {
+                        deletedAtHlc[ev.entity_id] = hlc
+                    }
+                    val s = schedulesInternal[ev.entity_id]
+                    if (s != null) {
+                        s.deleted = true
+                        s.status = ScheduleStatus.DELETED
+                        s.updated_at = ev.timestamp
+                    }
+                }
+
+                "schedule_restored" -> {
+                    val curDel = deletedAtHlc[ev.entity_id]
+                    if (curDel == null || HlcClock.compare(hlc, ev.device_id, curDel, "") >= 0) {
+                        deletedAtHlc.remove(ev.entity_id)
+                    }
+                    val s = schedulesInternal[ev.entity_id]
+                    if (s != null) {
+                        s.deleted = false
+                        s.status = ScheduleStatus.CONFIRMED
+                        s.updated_at = ev.timestamp
+                    }
+                }
+
                 "reminder_created", "alarm_set" -> {
                     val triggerTime = ev.payload["trigger_time"] as? String ?: ""
                     val title = ev.payload["title"] as? String ?: ""
                     val scheduleId = ev.payload["schedule_id"] as? String ?: ""
                     val type = if (ev.type == "alarm_set") "alarm" else "notification"
 
-                    reminders[ev.entity_id] = ReminderEntity(
+                    remindersInternal[ev.entity_id] = ReminderEntity(
                         id = ev.entity_id,
                         schedule_id = scheduleId,
                         title = title,
@@ -121,7 +169,7 @@ object ProjectionEngine {
                 }
 
                 "reminder_fired" -> {
-                    val rem = reminders[ev.entity_id]
+                    val rem = remindersInternal[ev.entity_id]
                     if (rem != null) {
                         rem.status = ReminderStatus.FIRED
                         rem.fired_at = ev.timestamp
@@ -130,6 +178,21 @@ object ProjectionEngine {
             }
         }
 
-        return ProjectedState(schedules, reminders)
+        // Projection hides deleted schedules and their reminders/alarms
+        val visibleSchedules = mutableMapOf<String, ScheduleEntity>()
+        for ((id, s) in schedulesInternal) {
+            if (!deletedAtHlc.containsKey(id) && !s.deleted) {
+                visibleSchedules[id] = s
+            }
+        }
+
+        val visibleReminders = mutableMapOf<String, ReminderEntity>()
+        for ((id, r) in remindersInternal) {
+            if (!deletedAtHlc.containsKey(r.schedule_id)) {
+                visibleReminders[id] = r
+            }
+        }
+
+        return ProjectedState(visibleSchedules, visibleReminders)
     }
 }

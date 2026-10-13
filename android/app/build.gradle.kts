@@ -99,3 +99,49 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
+
+val copySpecFilesTask = tasks.register("copySpecFiles") {
+    description = "Copies spec JSON files and fixtures from /spec into Android assets and test resources"
+    val rootSpecDir = file("${project.rootDir}/../spec")
+    val assetsSpecDir = file("${project.projectDir}/src/main/assets/spec")
+    val testResourcesSpecDir = file("${project.projectDir}/src/test/resources/spec")
+
+    inputs.dir(rootSpecDir)
+    outputs.dir(assetsSpecDir)
+    outputs.dir(testResourcesSpecDir)
+
+    doLast {
+        if (rootSpecDir.exists()) {
+            assetsSpecDir.mkdirs()
+            testResourcesSpecDir.mkdirs()
+            file("${testResourcesSpecDir}/fixtures").mkdirs()
+
+            copy {
+                from(rootSpecDir) {
+                    include("*.json")
+                }
+                into(assetsSpecDir)
+            }
+            copy {
+                from(rootSpecDir) {
+                    include("*.json")
+                }
+                into(testResourcesSpecDir)
+            }
+            val fixturesDir = file("${rootSpecDir}/fixtures")
+            if (fixturesDir.exists()) {
+                copy {
+                    from(fixturesDir) {
+                        include("*.json")
+                    }
+                    into(file("${testResourcesSpecDir}/fixtures"))
+                }
+            }
+        }
+    }
+}
+
+tasks.named("preBuild") {
+    dependsOn(copySpecFilesTask)
+}
+

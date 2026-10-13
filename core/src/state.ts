@@ -94,6 +94,44 @@ export class EventStore {
           entity.status = 'DISMISSED';
           entity.updated_at = ev.timestamp;
         }
+      } else if (ev.type === 'schedule_edited') {
+        const entity = schedules.get(ev.entity_id);
+        if (entity) {
+          if (ev.payload.title) entity.title = ev.payload.title;
+          if (ev.payload.start) {
+            entity.start = ev.payload.start;
+            entity.time_unspecified = false;
+          }
+          if (ev.payload.has_alarm !== undefined) {
+            entity.has_alarm = ev.payload.has_alarm;
+          }
+          entity.updated_at = ev.timestamp;
+        }
+      } else if (ev.type === 'schedule_deleted') {
+        schedules.delete(ev.entity_id);
+      } else if (ev.type === 'schedule_restored') {
+        // Find latest extracted/confirmed info from event history
+        let restoredEntity: ScheduleEntity | undefined;
+        for (const prev of this.events) {
+          if (prev.entity_id === ev.entity_id && prev.type === 'event_extracted') {
+            const p = prev.payload as ExtractionOutput;
+            restoredEntity = {
+              id: prev.entity_id,
+              title: p.title,
+              start: p.start,
+              start_date: p.start_date,
+              time_unspecified: p.time_unspecified,
+              status: 'CONFIRMED',
+              source_quote: p.source_quote,
+              confidence: p.confidence,
+              created_at: prev.timestamp,
+              updated_at: ev.timestamp
+            };
+          }
+        }
+        if (restoredEntity) {
+          schedules.set(ev.entity_id, restoredEntity);
+        }
       }
     }
 

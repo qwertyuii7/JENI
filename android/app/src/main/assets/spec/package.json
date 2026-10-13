@@ -1,0 +1,14 @@
+{
+  "name": "@schedule-assistant/spec",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "ajv": "^8.17.1",
+    "vitest": "^3.0.5"
+  }
+}

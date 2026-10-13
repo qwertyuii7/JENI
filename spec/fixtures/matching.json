@@ -1,0 +1,146 @@
+[
+  {
+    "id": "match-01",
+    "description": "physics lecture vs physics lab (cross-type separation: lecture vs lab must not match)",
+    "existing_events": [
+      {
+        "id": "sched-phys-lab",
+        "title": "physics lab",
+        "start": "2026-10-13T18:00:00+05:30"
+      }
+    ],
+    "incoming": {
+      "type": "cancel",
+      "title": "physics lecture"
+    },
+    "expected_matched_id": null
+  },
+  {
+    "id": "match-02",
+    "description": "DBMS class vs DBMS lab (cross-type separation: class vs lab must not match)",
+    "existing_events": [
+      {
+        "id": "sched-dbms-lab",
+        "title": "DBMS lab",
+        "start": "2026-10-13T14:00:00+05:30"
+      }
+    ],
+    "incoming": {
+      "type": "cancel",
+      "title": "DBMS class"
+    },
+    "expected_matched_id": null
+  },
+  {
+    "id": "match-03",
+    "description": "OS lecture vs OS practical (cross-type separation: lecture vs practical must not match)",
+    "existing_events": [
+      {
+        "id": "sched-os-prac",
+        "title": "OS practical",
+        "start": "2026-10-13T10:00:00+05:30"
+      }
+    ],
+    "incoming": {
+      "type": "cancel",
+      "title": "OS lecture"
+    },
+    "expected_matched_id": null
+  },
+  {
+    "id": "match-04",
+    "description": "physics lab vs chemistry lab (subject separation: physics vs chemistry must not match)",
+    "existing_events": [
+      {
+        "id": "sched-chem-lab",
+        "title": "chemistry lab",
+        "start": "2026-10-13T14:00:00+05:30"
+      }
+    ],
+    "incoming": {
+      "type": "cancel",
+      "title": "physics lab"
+    },
+    "expected_matched_id": null
+  },
+  {
+    "id": "match-05",
+    "description": "OS lecture cancelled matches OS ki lecture (dropping Hinglish filler ki)",
+    "existing_events": [
+      {
+        "id": "sched-os-lecture",
+        "title": "OS ki lecture",
+        "start": "2026-10-13T09:00:00+05:30"
+      }
+    ],
+    "incoming": {
+      "type": "cancel",
+      "title": "OS lecture"
+    },
+    "expected_matched_id": "sched-os-lecture"
+  },
+  {
+    "id": "match-06",
+    "description": "OS की lecture matches OS ki lecture (dropping Devanagari particle की)",
+    "existing_events": [
+      {
+        "id": "sched-os-lecture",
+        "title": "OS ki lecture",
+        "start": "2026-10-13T09:00:00+05:30"
+      }
+    ],
+    "incoming": {
+      "type": "cancel",
+      "title": "OS की lecture"
+    },
+    "expected_matched_id": "sched-os-lecture"
+  },
+  {
+    "id": "match-07",
+    "description": "OS वाली क्लास matches OS ki lecture (dropping particle वाली + intra-type synonym क्लास/lecture)",
+    "existing_events": [
+      {
+        "id": "sched-os-lecture",
+        "title": "OS ki lecture",
+        "start": "2026-10-13T09:00:00+05:30"
+      }
+    ],
+    "incoming": {
+      "type": "cancel",
+      "title": "OS वाली क्लास"
+    },
+    "expected_matched_id": "sched-os-lecture"
+  },
+  {
+    "id": "match-08",
+    "description": "DBMS class reschedule matches DBMS class",
+    "existing_events": [
+      {
+        "id": "sched-dbms-class",
+        "title": "DBMS class",
+        "start": "2026-10-13T16:00:00+05:30"
+      }
+    ],
+    "incoming": {
+      "type": "reschedule",
+      "title": "DBMS class"
+    },
+    "expected_matched_id": "sched-dbms-class"
+  },
+  {
+    "id": "match-09",
+    "description": "DBMS lecture reschedule matches dbms ki class (intra-type synonym lecture/class + filler ki)",
+    "existing_events": [
+      {
+        "id": "sched-dbms-class",
+        "title": "dbms ki class",
+        "start": "2026-10-13T16:00:00+05:30"
+      }
+    ],
+    "incoming": {
+      "type": "reschedule",
+      "title": "DBMS lecture"
+    },
+    "expected_matched_id": "sched-dbms-class"
+  }
+]

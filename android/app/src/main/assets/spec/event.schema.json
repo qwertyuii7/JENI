@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schedule-assistant.local/schemas/event.json",
+  "title": "SyncEvent",
+  "description": "Immutable append-only sync event across Android and Laptop",
+  "type": "object",
+  "required": ["id", "timestamp", "device_id", "seq", "hlc", "type", "entity_id", "payload"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique UUID v4 for deduplication"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 UTC or offset timestamp"
+    },
+    "device_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Originating device ID (e.g. android-xyz, laptop-abc)"
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonically increasing per-device sequence counter"
+    },
+    "hlc": {
+      "type": "string",
+      "description": "Hybrid Logical Clock timestamp string (ISO_counter)"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "message_received",
+        "event_extracted",
+        "event_confirmed",
+        "event_dismissed",
+        "reminder_created",
+        "reminder_fired",
+        "alarm_set",
+        "draft_created",
+        "draft_sent",
+        "parse_failed",
+        "correction_made"
+      ]
+    },
+    "entity_id": {
+      "type": "string",
+      "description": "ID of the target entity (e.g. schedule ID, message ID, or reminder ID)"
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false
+}

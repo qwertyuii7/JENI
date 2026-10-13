@@ -36,7 +36,8 @@ enum class ScheduleStatus {
     PENDING,
     CONFIRMED,
     DISMISSED,
-    CANCELLED
+    CANCELLED,
+    DELETED
 }
 
 data class ScheduleEntity(
@@ -47,6 +48,8 @@ data class ScheduleEntity(
     var time_unspecified: Boolean = false,
     var ambiguous: Boolean = false,
     var status: ScheduleStatus = ScheduleStatus.PENDING,
+    var deleted: Boolean = false,
+    var has_alarm: Boolean = false,
     val source_quote: String,
     val raw_text: String? = null,
     var confidence: Double,

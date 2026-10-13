@@ -19,13 +19,13 @@ const SCORE_REGEX = /\b\d{2,3}\s*for\s*\d\s*(wickets)?\b/i;
 const NON_SCHEDULE_TIME = /\b\d+\s*baje\s*tak\s*(sone|utha|soya|sona)\b/i;
 
 // Past tense patterns (kal class thi, कल हमारी क्लास थी, yesterday we had)
-const PAST_TENSE_REGEX = /\b(kal|parso|aaj subah)\s+.*(thi|tha|the|chuka hai|ho gaya tha)\b|कल\s+.*थी|\byesterday\s+we\s+had\b|\blast\s+(friday|monday|tuesday|wednesday|thursday|saturday|sunday)\s+we\b/i;
+const PAST_TENSE_REGEX = /\b(kal|parso|aaj subah)\s+.*(thi|tha|the|chuka hai|ho gaya tha)\b|कल\s+.*(?:थी|था|थे|हो चुकी थी|कैंसिल था)|(?:रद्द|स्थगित|शिफ्ट|कैंसिल)\s+.*(?:थी|था|हो चुकी थी|हो गई थी)|\byesterday\s+we\s+had\b|\blast\s+(friday|monday|tuesday|wednesday|thursday|saturday|sunday)\s+we\b/i;
 
 // Hypotheticals / Uncertainties
-const HYPOTHETICAL_REGEX = /\b(agar\s+kal|maybe\s+meeting|lagta\s+hai\s+kal|if\s+.*let\s+me\s+know|shayad\s+parso)\b/i;
+const HYPOTHETICAL_REGEX = /\b(agar\s+kal|maybe\s+meeting|lagta\s+hai\s+kal|if\s+.*let\s+me\s+know|shayad\s+parso)\b|(?:^|\s)(?:अगर|agar|शायद|shayad)(?:\s|$)|अगर\s+.*तो/i;
 
 // Questions patterns
-const QUESTION_REGEX = /\b(hai kya|hoga kya|kab hai|kab hoga|is there a|are there any)\b|\?\s*$/i;
+const QUESTION_REGEX = /\b(hai kya|hoga kya|kab hai|kab hoga|is there a|are there any)\b|(?:^|\s)(?:क्या|kya)(?:\s|$)|\?\s*$/i;
 
 // Third party schedule patterns
 const THIRD_PARTY_REGEX = /\b([A-Z][a-z]+ has a|unka viva hai|prof \w+ is taking lecture for batch)\b/i;

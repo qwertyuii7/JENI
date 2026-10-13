@@ -287,4 +287,49 @@ export class IngestionPipeline {
 
     return this.db.insertEvent(dismissEvent);
   }
+
+  public deleteSchedule(entityId: string, reason = 'user'): boolean {
+    const deleteEvent: SyncEvent = {
+      id: uuidv4(),
+      timestamp: new Date().toISOString(),
+      device_id: this.defaultDeviceId,
+      seq: this.db.getNextSeq(this.defaultDeviceId),
+      hlc: this.hlc.now(),
+      type: 'schedule_deleted',
+      entity_id: entityId,
+      payload: { reason }
+    };
+
+    return this.db.insertEvent(deleteEvent);
+  }
+
+  public editSchedule(entityId: string, updates: { title?: string; start?: string; has_alarm?: boolean }): boolean {
+    const editEvent: SyncEvent = {
+      id: uuidv4(),
+      timestamp: new Date().toISOString(),
+      device_id: this.defaultDeviceId,
+      seq: this.db.getNextSeq(this.defaultDeviceId),
+      hlc: this.hlc.now(),
+      type: 'schedule_edited',
+      entity_id: entityId,
+      payload: updates
+    };
+
+    return this.db.insertEvent(editEvent);
+  }
+
+  public restoreSchedule(entityId: string): boolean {
+    const restoreEvent: SyncEvent = {
+      id: uuidv4(),
+      timestamp: new Date().toISOString(),
+      device_id: this.defaultDeviceId,
+      seq: this.db.getNextSeq(this.defaultDeviceId),
+      hlc: this.hlc.now(),
+      type: 'schedule_restored',
+      entity_id: entityId,
+      payload: { reason: 'user_undo' }
+    };
+
+    return this.db.insertEvent(restoreEvent);
+  }
 }

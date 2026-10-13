@@ -11,7 +11,10 @@ export const EventTypeSchema = z.enum([
   'draft_created',
   'draft_sent',
   'parse_failed',
-  'correction_made'
+  'correction_made',
+  'schedule_deleted',
+  'schedule_restored',
+  'schedule_edited'
 ]);
 
 export type EventType = z.infer<typeof EventTypeSchema>;
@@ -60,7 +63,9 @@ export interface ScheduleEntity {
   start_date?: string;
   time_unspecified?: boolean;
   ambiguous?: boolean;
-  status: 'PENDING' | 'CONFIRMED' | 'DISMISSED' | 'CANCELLED';
+  status: 'PENDING' | 'CONFIRMED' | 'DISMISSED' | 'CANCELLED' | 'DELETED';
+  deleted?: boolean;
+  has_alarm?: boolean;
   source_quote: string;
   raw_text?: string;
   confidence: number;

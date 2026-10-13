@@ -141,6 +141,20 @@ Launch **Schedule Assistant** -> tap **Diagnostics** tab (bottom right) and veri
   - `getNextAlarmClock` displays label (Reminder vs Alarm) and target time (needs owner verification)
   - Scheduled count reflects active alarms/reminders (needs owner verification)
   - `canUseFullScreenIntent()` queried live via `NotificationManager`. When blocked, shows warning on Home with button opening `ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT` (needs owner verification)
+- [ ] **Confirmed Item Deletion & Undo**:
+  - Delete action on Home (Today/Upcoming) and Alerts displays confirmation dialog explaining reminder/alarm cancellation (needs owner verification)
+  - On confirm: immediately cancels AlarmManager reminder and alarm PendingIntents, stops ringing alarm if active, logs audit entry (`action: delete`, `result: SUCCESS`), and displays Undo snackbar for ~10s (needs owner verification)
+  - Tapping Undo appends `schedule_restored` event and reschedules alerts if start time is still in the future (needs owner verification)
+  - Swipe-to-delete on confirmed schedule cards immediately triggers deletion with Undo snackbar (needs owner verification)
+  - Next-alarm and scheduled count rows immediately refresh on delete and undo (needs owner verification)
+- [ ] **Confirmed Item Editing**:
+  - Edit dialog on confirmed cards allows modifying title, start time, and toggling audible alarm vs reminder notification (needs owner verification)
+  - Appends `schedule_edited` event, cancels previous alerts, reschedules updated alerts, and logs audit entry (needs owner verification)
+- [ ] **Diagnostics Bulk Cleanup**:
+  - "Delete all test items (Tombstone Cleanup)" button in Diagnostics requires confirmation before appending one tombstone per item (needs owner verification)
+  - Clears all test alerts and updates scheduled count (needs owner verification)
+- [ ] **Reboot Recovery Safety for Deleted Items**:
+  - Boot recovery projection hides deleted items and never restores or schedules alarms/reminders for deleted items (needs owner verification)
 
 ---
 

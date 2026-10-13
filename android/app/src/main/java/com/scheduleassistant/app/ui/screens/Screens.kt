@@ -49,7 +49,10 @@ fun HomeScreen(
     schedules: List<ScheduleEntity>,
     isListenerConnected: Boolean = true,
     onNavigateToPending: () -> Unit,
-    onNavigateToDebug: () -> Unit
+    onNavigateToDebug: () -> Unit,
+    onDelete: (String) -> Unit = {},
+    onRestore: (String) -> Unit = {},
+    onEdit: (String, String, String?, Boolean) -> Unit = { _, _, _, _ -> }
 ) {
     val context = LocalContext.current
     val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
@@ -311,20 +314,203 @@ fun HomeScreen(
                 }
             }
         } else {
-            items(todayConfirmed) { item ->
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = CardBg),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth()
+            items(todayConfirmed, key = { it.id }) { item ->
+                ConfirmedScheduleCard(
+                    item = item,
+                    onDelete = onDelete,
+                    onEdit = onEdit
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ConfirmedScheduleCard(
+    item: ScheduleEntity,
+    onDelete: (String) -> Unit,
+    onEdit: (String, String, String?, Boolean) -> Unit
+) {
+    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+    var showEditDialog by remember { mutableStateOf(false) }
+
+    var editTitle by remember(item.title) { mutableStateOf(item.title) }
+    var editTime by remember(item.start) { mutableStateOf(item.start ?: item.start_date ?: "") }
+    var editAlarm by remember(item.has_alarm) { mutableStateOf(item.has_alarm) }
+
+    if (showDeleteConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirmDialog = false },
+            title = { Text("Delete Schedule?", color = TextLight, fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "Are you sure you want to delete \"${item.title}\"? All associated reminders and alarms will be cancelled immediately.",
+                    color = TextMuted,
+                    fontSize = 14.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDeleteConfirmDialog = false
+                        onDelete(item.id)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Danger)
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Delete", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirmDialog = false }) {
+                    Text("Cancel", color = TextMuted)
+                }
+            },
+            containerColor = CardBg
+        )
+    }
+
+    if (showEditDialog) {
+        AlertDialog(
+            onDismissRequest = { showEditDialog = false },
+            title = { Text("Edit Confirmed Schedule", color = TextLight, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedTextField(
+                        value = editTitle,
+                        onValueChange = { editTitle = it },
+                        label = { Text("Title") },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = TextLight,
+                            unfocusedTextColor = TextLight,
+                            focusedBorderColor = Primary,
+                            unfocusedBorderColor = CardBorder
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = editTime,
+                        onValueChange = { editTime = it },
+                        label = { Text("Start Time (ISO or HH:mm)") },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = TextLight,
+                            unfocusedTextColor = TextLight,
+                            focusedBorderColor = Primary,
+                            unfocusedBorderColor = CardBorder
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Surface(
+                        color = CardBorder,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = if (editAlarm) "⏰ Audible Alarm" else "🔔 Reminder Notification",
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (editAlarm) Warning else TextLight,
+                                    fontSize = 13.sp
+                                )
+                                Text(
+                                    text = if (editAlarm) "Rings aloud with alarm UI" else "Banner notification only",
+                                    color = TextMuted,
+                                    fontSize = 11.sp
+                                )
+                            }
+                            Switch(
+                                checked = editAlarm,
+                                onCheckedChange = { editAlarm = it },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color.White,
+                                    checkedTrackColor = Warning
+                                )
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showEditDialog = false
+                        onEdit(item.id, editTitle, editTime.ifBlank { null }, editAlarm)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Primary)
+                ) {
+                    Text("Save", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEditDialog = false }) {
+                    Text("Cancel", color = TextMuted)
+                }
+            },
+            containerColor = CardBg
+        )
+    }
+
+    val dismissState = rememberSwipeToDismissBoxState(
+        confirmValueChange = { value ->
+            if (value == SwipeToDismissBoxValue.EndToStart || value == SwipeToDismissBoxValue.StartToEnd) {
+                onDelete(item.id)
+                true
+            } else {
+                false
+            }
+        }
+    )
+
+    SwipeToDismissBox(
+        state = dismissState,
+        backgroundContent = {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Danger, RoundedCornerShape(12.dp))
+                    .padding(horizontal = 20.dp),
+                contentAlignment = Alignment.CenterEnd
+            ) {
+                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.White)
+            }
+        }
+    ) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = CardBg),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(item.title, fontWeight = FontWeight.Bold, color = TextLight, fontSize = 16.sp)
                         Spacer(Modifier.height(4.dp))
                         Text(item.start ?: item.start_date ?: "Time unspecified", color = Accent, fontSize = 13.sp)
-                        Spacer(Modifier.height(4.dp))
-                        Text("\"${item.source_quote}\"", color = TextMuted, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { showEditDialog = true }) {
+                            Icon(Icons.Default.Edit, contentDescription = "Edit", tint = Accent)
+                        }
+                        IconButton(onClick = { showDeleteConfirmDialog = true }) {
+                            Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Danger)
+                        }
                     }
                 }
+                Spacer(Modifier.height(4.dp))
+                Text("\"${item.source_quote}\"", color = TextMuted, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
             }
         }
     }
@@ -512,10 +698,14 @@ fun PendingScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AlertsScreen(
     reminders: List<com.scheduleassistant.app.data.model.ReminderEntity>,
-    confirmedCount: Int = 0
+    confirmedCount: Int = 0,
+    onDelete: (String) -> Unit = {},
+    onRestore: (String) -> Unit = {},
+    onEdit: (String, String, String?, Boolean) -> Unit = { _, _, _, _ -> }
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val db = remember { AppDatabase.getInstance(context) }
@@ -632,32 +822,187 @@ fun AlertsScreen(
                 }
             }
         } else {
-            items(reminders) { rem ->
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = CardBg),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier.padding(16.dp).fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = if (rem.type == "alarm") "⏰ ALARM (Ringing)" else "🔔 REMINDER (15m lead)",
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (rem.type == "alarm") Warning else Accent,
-                                    fontSize = 12.sp
-                                )
-                            }
-                            Text(rem.title, fontWeight = FontWeight.SemiBold, color = TextLight, fontSize = 16.sp)
-                            Text("Trigger: ${rem.trigger_time}", color = TextMuted, fontSize = 12.sp)
-                        }
+            items(reminders, key = { it.id }) { rem ->
+                var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+                var showEditDialog by remember { mutableStateOf(false) }
+                var editTitle by remember(rem.title) { mutableStateOf(rem.title) }
+                var editTime by remember(rem.trigger_time) { mutableStateOf(rem.trigger_time) }
+                var editAlarm by remember(rem.type) { mutableStateOf(rem.type == "alarm") }
 
-                        Badge(containerColor = if (rem.status.name == "FIRED") Success else Primary) {
-                            Text(rem.status.name, color = Color.White)
+                if (showDeleteConfirmDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showDeleteConfirmDialog = false },
+                        title = { Text("Delete Alert & Schedule?", color = TextLight, fontWeight = FontWeight.Bold) },
+                        text = {
+                            Text(
+                                "Are you sure you want to delete this alert for \"${rem.title}\"? The schedule and all associated alerts will be cancelled.",
+                                color = TextMuted,
+                                fontSize = 14.sp
+                            )
+                        },
+                        confirmButton = {
+                            Button(
+                                onClick = {
+                                    showDeleteConfirmDialog = false
+                                    onDelete(rem.schedule_id)
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Danger)
+                            ) {
+                                Text("Delete", color = Color.White)
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showDeleteConfirmDialog = false }) {
+                                Text("Cancel", color = TextMuted)
+                            }
+                        },
+                        containerColor = CardBg
+                    )
+                }
+
+                if (showEditDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showEditDialog = false },
+                        title = { Text("Edit Schedule Alert", color = TextLight, fontWeight = FontWeight.Bold) },
+                        text = {
+                            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                OutlinedTextField(
+                                    value = editTitle,
+                                    onValueChange = { editTitle = it },
+                                    label = { Text("Title") },
+                                    singleLine = true,
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedTextColor = TextLight,
+                                        unfocusedTextColor = TextLight,
+                                        focusedBorderColor = Primary,
+                                        unfocusedBorderColor = CardBorder
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                OutlinedTextField(
+                                    value = editTime,
+                                    onValueChange = { editTime = it },
+                                    label = { Text("Start Time") },
+                                    singleLine = true,
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedTextColor = TextLight,
+                                        unfocusedTextColor = TextLight,
+                                        focusedBorderColor = Primary,
+                                        unfocusedBorderColor = CardBorder
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Surface(
+                                    color = CardBorder,
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = if (editAlarm) "⏰ Audible Alarm" else "🔔 Reminder Notification",
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = if (editAlarm) Warning else TextLight,
+                                                fontSize = 13.sp
+                                            )
+                                        }
+                                        Switch(
+                                            checked = editAlarm,
+                                            onCheckedChange = { editAlarm = it },
+                                            colors = SwitchDefaults.colors(
+                                                checkedThumbColor = Color.White,
+                                                checkedTrackColor = Warning
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            Button(
+                                onClick = {
+                                    showEditDialog = false
+                                    onEdit(rem.schedule_id, editTitle, editTime.ifBlank { null }, editAlarm)
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Primary)
+                            ) {
+                                Text("Save", color = Color.White)
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showEditDialog = false }) {
+                                Text("Cancel", color = TextMuted)
+                            }
+                        },
+                        containerColor = CardBg
+                    )
+                }
+
+                val dismissState = rememberSwipeToDismissBoxState(
+                    confirmValueChange = { value ->
+                        if (value == SwipeToDismissBoxValue.EndToStart || value == SwipeToDismissBoxValue.StartToEnd) {
+                            onDelete(rem.schedule_id)
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                )
+
+                SwipeToDismissBox(
+                    state = dismissState,
+                    backgroundContent = {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Danger, RoundedCornerShape(12.dp))
+                                .padding(horizontal = 20.dp),
+                            contentAlignment = Alignment.CenterEnd
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.White)
+                        }
+                    }
+                ) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = CardBg),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(16.dp).fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = if (rem.type == "alarm") "⏰ ALARM (Ringing)" else "🔔 REMINDER (15m lead)",
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (rem.type == "alarm") Warning else Accent,
+                                        fontSize = 12.sp
+                                    )
+                                }
+                                Text(rem.title, fontWeight = FontWeight.SemiBold, color = TextLight, fontSize = 16.sp)
+                                Text("Trigger: ${rem.trigger_time}", color = TextMuted, fontSize = 12.sp)
+                            }
+
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Badge(containerColor = if (rem.status.name == "FIRED") Success else Primary) {
+                                    Text(rem.status.name, color = Color.White)
+                                }
+                                IconButton(onClick = { showEditDialog = true }) {
+                                    Icon(Icons.Default.Edit, contentDescription = "Edit", tint = Accent)
+                                }
+                                IconButton(onClick = { showDeleteConfirmDialog = true }) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Danger)
+                                }
+                            }
                         }
                     }
                 }
@@ -851,7 +1196,8 @@ fun DebugScreen(
 @Composable
 fun DiagnosticsScreen(
     scheduledAlarmsCount: Int = 0,
-    onRequestNotificationPermission: () -> Unit = {}
+    onRequestNotificationPermission: () -> Unit = {},
+    onDeleteAllTestItems: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -1866,6 +2212,46 @@ fun DiagnosticsScreen(
 
                     Divider(color = CardBorder)
 
+                    var showBulkDeleteConfirmDialog by remember { mutableStateOf(false) }
+                    if (showBulkDeleteConfirmDialog) {
+                        AlertDialog(
+                            onDismissRequest = { showBulkDeleteConfirmDialog = false },
+                            title = { Text("Delete All Test Items?", color = TextLight, fontWeight = FontWeight.Bold) },
+                            text = {
+                                Text(
+                                    "This will tombstone all test items and cancel their alarms and reminders. This action appends delete events and cannot be undone.",
+                                    color = TextMuted,
+                                    fontSize = 14.sp
+                                )
+                            },
+                            confirmButton = {
+                                Button(
+                                    onClick = {
+                                        showBulkDeleteConfirmDialog = false
+                                        onDeleteAllTestItems()
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Danger)
+                                ) {
+                                    Text("Delete All Test Items", color = Color.White)
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showBulkDeleteConfirmDialog = false }) {
+                                    Text("Cancel", color = TextMuted)
+                                }
+                            },
+                            containerColor = CardBg
+                        )
+                    }
+
+                    Button(
+                        onClick = { showBulkDeleteConfirmDialog = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = Danger),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("🗑️ Delete all test items (Tombstone Cleanup)", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+
                     Button(
                         onClick = {
                             coroutineScope.launch {
@@ -1900,11 +2286,13 @@ fun DiagnosticsScreen(
 @Composable
 fun SettingsScreen(
     scheduledAlarmsCount: Int = 0,
-    onRequestNotificationPermission: () -> Unit = {}
+    onRequestNotificationPermission: () -> Unit = {},
+    onDeleteAllTestItems: () -> Unit = {}
 ) {
     DiagnosticsScreen(
         scheduledAlarmsCount = scheduledAlarmsCount,
-        onRequestNotificationPermission = onRequestNotificationPermission
+        onRequestNotificationPermission = onRequestNotificationPermission,
+        onDeleteAllTestItems = onDeleteAllTestItems
     )
 }
 

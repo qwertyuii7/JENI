@@ -145,4 +145,144 @@ describe('HLC Ordering, Full Replay & Shuffled/Duplicated Invariant Suite', () =
       expect(duplicatedState.schedules.get(id)?.title).toBe(s.title);
     }
   });
+
+  it('proves delete followed by older edit stays deleted under HLC ordering', () => {
+    const hlc1 = '2026-10-12T10:00:00.000Z_0001';
+    const hlcEditOlder = '2026-10-12T10:05:00.000Z_0001';
+    const hlcDeleteNewer = '2026-10-12T10:10:00.000Z_0001';
+
+    // 1. Initial schedule created and confirmed
+    const ev1: SyncEvent = {
+      id: 'ev-create',
+      timestamp: '2026-10-12T10:00:00Z',
+      device_id: 'device-a',
+      seq: 1,
+      hlc: hlc1,
+      type: 'event_extracted',
+      entity_id: 'sched-hlc-test',
+      payload: {
+        type: 'new',
+        title: 'Original Title',
+        start: '2026-10-13T10:00:00+05:30',
+        confidence: 0.95,
+        source_quote: 'Original Title'
+      }
+    };
+    const evConfirm: SyncEvent = {
+      id: 'ev-confirm',
+      timestamp: '2026-10-12T10:01:00Z',
+      device_id: 'device-a',
+      seq: 2,
+      hlc: '2026-10-12T10:01:00.000Z_0001',
+      type: 'event_confirmed',
+      entity_id: 'sched-hlc-test',
+      payload: {}
+    };
+
+    // 2. Newer delete (HLC: 10:10)
+    const evDelete: SyncEvent = {
+      id: 'ev-delete',
+      timestamp: '2026-10-12T10:10:00Z',
+      device_id: 'device-a',
+      seq: 3,
+      hlc: hlcDeleteNewer,
+      type: 'schedule_deleted',
+      entity_id: 'sched-hlc-test',
+      payload: { reason: 'user' }
+    };
+
+    // 3. Older edit arriving out-of-order from another device (HLC: 10:05)
+    const evOlderEdit: SyncEvent = {
+      id: 'ev-older-edit',
+      timestamp: '2026-10-12T10:05:00Z',
+      device_id: 'device-b',
+      seq: 1,
+      hlc: hlcEditOlder,
+      type: 'schedule_edited',
+      entity_id: 'sched-hlc-test',
+      payload: { title: 'Edited Title By Offline Device' }
+    };
+
+    // Inverted arrival order: delete arrived first, then older edit
+    const stateArrivalOrder = ProjectionEngine.projectState([ev1, evConfirm, evDelete, evOlderEdit]);
+    expect(stateArrivalOrder.schedules.has('sched-hlc-test')).toBe(false);
+
+    // Shuffled arrival order
+    const stateShuffled = ProjectionEngine.projectState([evOlderEdit, evDelete, evConfirm, ev1]);
+    expect(stateShuffled.schedules.has('sched-hlc-test')).toBe(false);
+
+    // Full replay of canonical events
+    const canonicalOrder = [ev1, evConfirm, evOlderEdit, evDelete];
+    const stateCanonical = ProjectionEngine.projectState(canonicalOrder);
+    expect(stateCanonical.schedules.has('sched-hlc-test')).toBe(false);
+  });
+
+  it('verifies projection hides deleted schedules and their reminders/alarms idempotently', () => {
+    const res = pipelineLaptop.processMessage('OS lecture tomorrow at 11 AM', {
+      referenceNow: '2026-10-12T10:00:00+05:30'
+    });
+    const entityId = res.entity_id!;
+    pipelineLaptop.confirmSchedule(entityId);
+
+    // Add reminder and alarm events
+    const remEvent: SyncEvent = {
+      id: 'rem-ev-1',
+      timestamp: '2026-10-12T10:02:00Z',
+      device_id: 'device-laptop',
+      seq: 3,
+      hlc: '2026-10-12T10:02:00.000Z_0001',
+      type: 'reminder_created',
+      entity_id: `rem-${entityId}`,
+      payload: {
+        schedule_id: entityId,
+        title: 'OS lecture',
+        trigger_time: '2026-10-13T10:45:00+05:30',
+        type: 'notification'
+      }
+    };
+    const alarmEvent: SyncEvent = {
+      id: 'alarm-ev-1',
+      timestamp: '2026-10-12T10:03:00Z',
+      device_id: 'device-laptop',
+      seq: 4,
+      hlc: '2026-10-12T10:03:00.000Z_0001',
+      type: 'alarm_set',
+      entity_id: `alarm-${entityId}`,
+      payload: {
+        schedule_id: entityId,
+        title: 'OS lecture',
+        trigger_time: '2026-10-13T11:00:00+05:30',
+        type: 'alarm'
+      }
+    };
+    db.insertEvent(remEvent);
+    db.insertEvent(alarmEvent);
+
+    let state = ProjectionEngine.projectState(db.getAllEvents());
+    expect(state.schedules.has(entityId)).toBe(true);
+    expect(state.reminders.has(`rem-${entityId}`)).toBe(true);
+    expect(state.reminders.has(`alarm-${entityId}`)).toBe(true);
+
+    // First delete
+    pipelineLaptop.deleteSchedule(entityId, 'user');
+    state = ProjectionEngine.projectState(db.getAllEvents());
+    expect(state.schedules.has(entityId)).toBe(false);
+    expect(state.reminders.has(`rem-${entityId}`)).toBe(false);
+    expect(state.reminders.has(`alarm-${entityId}`)).toBe(false);
+
+    // Second delete (idempotency check)
+    pipelineLaptop.deleteSchedule(entityId, 'user');
+    const stateIdempotent = ProjectionEngine.projectState(db.getAllEvents());
+    expect(stateIdempotent.schedules.has(entityId)).toBe(false);
+    expect(stateIdempotent.reminders.has(`rem-${entityId}`)).toBe(false);
+    expect(stateIdempotent.reminders.has(`alarm-${entityId}`)).toBe(false);
+
+    // Restore via undo
+    pipelineLaptop.restoreSchedule(entityId);
+    const restoredState = ProjectionEngine.projectState(db.getAllEvents());
+    expect(restoredState.schedules.has(entityId)).toBe(true);
+    expect(restoredState.schedules.get(entityId)?.status).toBe('CONFIRMED');
+    expect(restoredState.reminders.has(`rem-${entityId}`)).toBe(true);
+    expect(restoredState.reminders.has(`alarm-${entityId}`)).toBe(true);
+  });
 });

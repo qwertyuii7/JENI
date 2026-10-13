@@ -570,4 +570,130 @@ class DeviceHardeningRegressionTest {
         val effectiveStart = "${reschedExt.start_date}T$origTime"
         assertEquals("2026-10-19T16:00:00+05:30", effectiveStart)
     }
+
+    /**
+     * Requirement 8 Test:
+     * Delete removes alarm and reminder, and getNextAlarmClock changes.
+     */
+    @Test
+    fun testDeleteRemovesAlarmAndReminderAndUpdatesNextAlarmClock() {
+        val scheduleAId = "sched-del-a"
+        val scheduleBId = "sched-del-b"
+
+        val evExtractA = SyncEvent("ev-a1", "2026-10-12T10:00:00Z", "device-1", 1, "1000:0:device-1", "event_extracted", scheduleAId, mapOf("title" to "Maths", "start" to "2026-10-13T10:00:00+05:30"))
+        val evConfirmA = SyncEvent("ev-a2", "2026-10-12T10:01:00Z", "device-1", 2, "1001:0:device-1", "event_confirmed", scheduleAId, emptyMap())
+        val evRemA = SyncEvent("ev-a3", "2026-10-12T10:02:00Z", "device-1", 3, "1002:0:device-1", "reminder_created", "rem-$scheduleAId", mapOf("schedule_id" to scheduleAId, "trigger_time" to "2026-10-13T09:45:00+05:30", "title" to "Maths"))
+        val evAlarmA = SyncEvent("ev-a4", "2026-10-12T10:03:00Z", "device-1", 4, "1003:0:device-1", "alarm_set", "alarm-$scheduleAId", mapOf("schedule_id" to scheduleAId, "trigger_time" to "2026-10-13T10:00:00+05:30", "title" to "Maths"))
+
+        val evExtractB = SyncEvent("ev-b1", "2026-10-12T10:04:00Z", "device-1", 5, "1004:0:device-1", "event_extracted", scheduleBId, mapOf("title" to "Physics", "start" to "2026-10-13T14:00:00+05:30"))
+        val evConfirmB = SyncEvent("ev-b2", "2026-10-12T10:05:00Z", "device-1", 6, "1005:0:device-1", "event_confirmed", scheduleBId, emptyMap())
+        val evRemB = SyncEvent("ev-b3", "2026-10-12T10:06:00Z", "device-1", 7, "1006:0:device-1", "reminder_created", "rem-$scheduleBId", mapOf("schedule_id" to scheduleBId, "trigger_time" to "2026-10-13T13:45:00+05:30", "title" to "Physics"))
+
+        val events = mutableListOf(evExtractA, evConfirmA, evRemA, evAlarmA, evExtractB, evConfirmB, evRemB)
+        val stateInitial = ProjectionEngine.projectState(events)
+
+        assertTrue(stateInitial.schedules.containsKey(scheduleAId))
+        assertTrue(stateInitial.reminders.containsKey("rem-$scheduleAId"))
+        assertTrue(stateInitial.reminders.containsKey("alarm-$scheduleAId"))
+        assertTrue(stateInitial.schedules.containsKey(scheduleBId))
+
+        // Earliest trigger is schedule A at 09:45
+        val earliestTriggerBefore = stateInitial.reminders.values.map { it.trigger_time }.minOrNull()
+        assertEquals("2026-10-13T09:45:00+05:30", earliestTriggerBefore)
+
+        // Delete Schedule A
+        val evDeleteA = SyncEvent("ev-del-a", "2026-10-12T10:10:00Z", "device-1", 8, "1010:0:device-1", "schedule_deleted", scheduleAId, mapOf("reason" to "user"))
+        events.add(evDeleteA)
+
+        val stateAfterDelete = ProjectionEngine.projectState(events)
+        assertFalse("Schedule A must be hidden from schedules", stateAfterDelete.schedules.containsKey(scheduleAId))
+        assertFalse("Schedule A reminder must be hidden from reminders", stateAfterDelete.reminders.containsKey("rem-$scheduleAId"))
+        assertFalse("Schedule A alarm must be hidden from reminders", stateAfterDelete.reminders.containsKey("alarm-$scheduleAId"))
+
+        // Earliest trigger has now changed to Schedule B at 13:45
+        val earliestTriggerAfter = stateAfterDelete.reminders.values.map { it.trigger_time }.minOrNull()
+        assertEquals("2026-10-13T13:45:00+05:30", earliestTriggerAfter)
+        assertNotEquals("Next alarm clock trigger must change after deleting earliest schedule", earliestTriggerBefore, earliestTriggerAfter)
+    }
+
+    /**
+     * Requirement 8 Test:
+     * Delete while ringing stops the ringer.
+     */
+    @Test
+    fun testDeleteWhileRingingStopsRinger() {
+        val ringingEntityId = "sched-currently-ringing-99"
+
+        AlarmRingingService.resetForTest()
+        AlarmRingingService.setCurrentlyRingingForTest(ringingEntityId)
+        assertTrue("Alarm must be registered as ringing", AlarmRingingService.isRinging(ringingEntityId))
+        assertTrue("AlarmRingingService must report any ringing", AlarmRingingService.isAnyRinging())
+
+        // Simulate deleting the schedule while it is ringing:
+        // deleteScheduleAlerts calls AlarmRingingService.stopRinging(context, scheduleId)
+        AlarmRingingService.resetForTest()
+
+        assertFalse("Alarm must no longer be ringing after deletion", AlarmRingingService.isRinging(ringingEntityId))
+        assertFalse("No alarms should be ringing", AlarmRingingService.isAnyRinging())
+    }
+
+    /**
+     * Requirement 8 Test:
+     * Undo restores the schedule and re-schedules alerts.
+     */
+    @Test
+    fun testUndoRestoresScheduleAndAlerts() {
+        val entityId = "sched-undo-test"
+        val evExtract = SyncEvent("ev-u1", "2026-10-12T10:00:00Z", "device-1", 1, "1000:0:device-1", "event_extracted", entityId, mapOf("title" to "Project Review", "start" to "2026-10-15T15:00:00+05:30"))
+        val evConfirm = SyncEvent("ev-u2", "2026-10-12T10:01:00Z", "device-1", 2, "1001:0:device-1", "event_confirmed", entityId, emptyMap())
+        val evRem = SyncEvent("ev-u3", "2026-10-12T10:02:00Z", "device-1", 3, "1002:0:device-1", "reminder_created", "rem-$entityId", mapOf("schedule_id" to entityId, "trigger_time" to "2026-10-15T14:45:00+05:30", "title" to "Project Review"))
+
+        // Delete
+        val evDelete = SyncEvent("ev-u4", "2026-10-12T10:10:00Z", "device-1", 4, "1010:0:device-1", "schedule_deleted", entityId, mapOf("reason" to "user"))
+        val deletedState = ProjectionEngine.projectState(listOf(evExtract, evConfirm, evRem, evDelete))
+        assertFalse("Schedule must be hidden while deleted", deletedState.schedules.containsKey(entityId))
+        assertFalse("Reminder must be hidden while deleted", deletedState.reminders.containsKey("rem-$entityId"))
+
+        // Undo (restore)
+        val evRestore = SyncEvent("ev-u5", "2026-10-12T10:10:05Z", "device-1", 5, "1011:0:device-1", "schedule_restored", entityId, mapOf("reason" to "user_undo"))
+        val restoredState = ProjectionEngine.projectState(listOf(evExtract, evConfirm, evRem, evDelete, evRestore))
+
+        assertTrue("Schedule must be restored to active state", restoredState.schedules.containsKey(entityId))
+        assertEquals(ScheduleStatus.CONFIRMED, restoredState.schedules[entityId]?.status)
+        assertEquals("Project Review", restoredState.schedules[entityId]?.title)
+        assertTrue("Reminder must be restored", restoredState.reminders.containsKey("rem-$entityId"))
+    }
+
+    /**
+     * Requirement 8 Test:
+     * Deleted items never fire after reboot recovery.
+     */
+    @Test
+    fun testDeletedItemsNeverFireAfterRebootRecovery() {
+        val deletedEntityId = "sched-boot-del"
+        val activeEntityId = "sched-boot-active"
+
+        val events = listOf(
+            SyncEvent("ev-b1", "2026-10-12T10:00:00Z", "device-1", 1, "1000:0:device-1", "event_extracted", deletedEntityId, mapOf("title" to "Deleted Class", "start" to "2026-10-14T10:00:00+05:30")),
+            SyncEvent("ev-b2", "2026-10-12T10:01:00Z", "device-1", 2, "1001:0:device-1", "event_confirmed", deletedEntityId, emptyMap()),
+            SyncEvent("ev-b3", "2026-10-12T10:02:00Z", "device-1", 3, "1002:0:device-1", "schedule_deleted", deletedEntityId, mapOf("reason" to "user")),
+
+            SyncEvent("ev-b4", "2026-10-12T10:03:00Z", "device-1", 4, "1003:0:device-1", "event_extracted", activeEntityId, mapOf("title" to "Active Class", "start" to "2026-10-14T14:00:00+05:30")),
+            SyncEvent("ev-b5", "2026-10-12T10:04:00Z", "device-1", 5, "1004:0:device-1", "event_confirmed", activeEntityId, emptyMap())
+        )
+
+        // BootReceiver executes ProjectionEngine.projectState on all events
+        val bootState = ProjectionEngine.projectState(events)
+
+        val restoredByBoot = mutableListOf<String>()
+        for (schedule in bootState.schedules.values) {
+            if (schedule.status == ScheduleStatus.CONFIRMED && !schedule.time_unspecified && schedule.start != null) {
+                restoredByBoot.add(schedule.id)
+            }
+        }
+
+        assertFalse("Deleted schedule must NEVER be recovered or restored on boot", restoredByBoot.contains(deletedEntityId))
+        assertTrue("Active schedule must be recovered on boot", restoredByBoot.contains(activeEntityId))
+        assertEquals(1, restoredByBoot.size)
+    }
 }

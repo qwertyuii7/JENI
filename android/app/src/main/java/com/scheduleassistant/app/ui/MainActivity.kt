@@ -168,8 +168,25 @@ class MainActivity : ComponentActivity() {
 
         val pendingCount = schedules.count { it.status == ScheduleStatus.PENDING }
         val scheduledAlarmsCount = reminders.count { it.status.name == "SCHEDULED" }
+        val snackbarHostState = remember { SnackbarHostState() }
+        val coroutineScope = rememberCoroutineScope()
+
+        val onDeleteWithUndo: (String) -> Unit = { id ->
+            handleDeleteSchedule(id)
+            coroutineScope.launch {
+                val result = snackbarHostState.showSnackbar(
+                    message = "Schedule deleted",
+                    actionLabel = "Undo",
+                    duration = SnackbarDuration.Long
+                )
+                if (result == SnackbarResult.ActionPerformed) {
+                    handleRestoreSchedule(id)
+                }
+            }
+        }
 
         Scaffold(
+            snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
                 NavigationBar(
                     containerColor = DarkBg,
@@ -233,7 +250,10 @@ class MainActivity : ComponentActivity() {
                         schedules = schedules,
                         isListenerConnected = isListenerConnected,
                         onNavigateToPending = { currentTab = AppTab.PENDING },
-                        onNavigateToDebug = { currentTab = AppTab.DEBUG }
+                        onNavigateToDebug = { currentTab = AppTab.DEBUG },
+                        onDelete = onDeleteWithUndo,
+                        onRestore = { id -> handleRestoreSchedule(id) },
+                        onEdit = { id, title, start, alarm -> handleEditSchedule(id, title, start, alarm) }
                     )
                     AppTab.PENDING -> PendingScreen(
                         schedules = schedules,
@@ -246,7 +266,10 @@ class MainActivity : ComponentActivity() {
                     )
                     AppTab.ALERTS -> AlertsScreen(
                         reminders = reminders,
-                        confirmedCount = schedules.count { it.status == ScheduleStatus.CONFIRMED }
+                        confirmedCount = schedules.count { it.status == ScheduleStatus.CONFIRMED },
+                        onDelete = onDeleteWithUndo,
+                        onRestore = { id -> handleRestoreSchedule(id) },
+                        onEdit = { id, title, start, alarm -> handleEditSchedule(id, title, start, alarm) }
                     )
                     AppTab.DEBUG -> DebugScreen(
                         onInjectMessage = { text ->
@@ -264,7 +287,8 @@ class MainActivity : ComponentActivity() {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                                 notificationPermissionLauncher.launch("android.permission.POST_NOTIFICATIONS")
                             }
-                        }
+                        },
+                        onDeleteAllTestItems = { handleDeleteAllTestItems() }
                     )
                 }
             }
@@ -448,6 +472,134 @@ class MainActivity : ComponentActivity() {
 
             withContext(Dispatchers.Main) {
                 alarmScheduler.cancelAlertsForSchedule(id)
+            }
+        }
+    }
+
+    fun handleDeleteSchedule(id: String, reason: String = "user") {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val nextSeq = db.eventDao().getNextSeq(deviceId)
+            val hlcNow = hlc.now()
+            val nowIso = getIsoNow()
+
+            val payloadJson = JSONObject().apply {
+                put("reason", reason)
+            }
+            val deleteEntity = SyncEventEntity(
+                id = UUID.randomUUID().toString(),
+                timestamp = nowIso,
+                deviceId = deviceId,
+                seq = nextSeq,
+                hlc = hlcNow,
+                type = "schedule_deleted",
+                entityId = id,
+                payload = payloadJson.toString()
+            )
+            db.eventDao().insertEvent(deleteEntity)
+
+            withContext(Dispatchers.Main) {
+                alarmScheduler.deleteScheduleAlerts(id)
+            }
+        }
+    }
+
+    fun handleRestoreSchedule(id: String) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val nextSeq = db.eventDao().getNextSeq(deviceId)
+            val hlcNow = hlc.now()
+            val nowIso = getIsoNow()
+
+            val payloadJson = JSONObject().apply {
+                put("reason", "user_undo")
+            }
+            val restoreEntity = SyncEventEntity(
+                id = UUID.randomUUID().toString(),
+                timestamp = nowIso,
+                deviceId = deviceId,
+                seq = nextSeq,
+                hlc = hlcNow,
+                type = "schedule_restored",
+                entityId = id,
+                payload = payloadJson.toString()
+            )
+            db.eventDao().insertEvent(restoreEntity)
+
+            val allEvents = db.eventDao().getAllEvents().map { it.toSyncEvent() }
+            val state = com.scheduleassistant.app.data.projection.ProjectionEngine.projectState(allEvents)
+            val restored = state.schedules[id]
+
+            if (restored != null && restored.start != null && !restored.time_unspecified) {
+                withContext(Dispatchers.Main) {
+                    alarmScheduler.restoreScheduleAlerts(restored, enableAlarm = restored.has_alarm)
+                }
+            }
+        }
+    }
+
+    fun handleEditSchedule(id: String, newTitle: String, newStart: String?, enableAlarm: Boolean) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val nextSeq = db.eventDao().getNextSeq(deviceId)
+            val hlcNow = hlc.now()
+            val nowIso = getIsoNow()
+
+            val payloadJson = JSONObject().apply {
+                put("title", newTitle)
+                if (newStart != null) put("start", newStart)
+                put("has_alarm", enableAlarm)
+            }
+            val editEntity = SyncEventEntity(
+                id = UUID.randomUUID().toString(),
+                timestamp = nowIso,
+                deviceId = deviceId,
+                seq = nextSeq,
+                hlc = hlcNow,
+                type = "schedule_edited",
+                entityId = id,
+                payload = payloadJson.toString()
+            )
+            db.eventDao().insertEvent(editEntity)
+
+            val allEvents = db.eventDao().getAllEvents().map { it.toSyncEvent() }
+            val state = com.scheduleassistant.app.data.projection.ProjectionEngine.projectState(allEvents)
+            val updated = state.schedules[id]
+
+            if (updated != null) {
+                withContext(Dispatchers.Main) {
+                    alarmScheduler.editScheduleAlerts(updated, enableAlarm = enableAlarm)
+                }
+            }
+        }
+    }
+
+    fun handleDeleteAllTestItems() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val allEvents = db.eventDao().getAllEvents().map { it.toSyncEvent() }
+            val state = com.scheduleassistant.app.data.projection.ProjectionEngine.projectState(allEvents)
+            val testSchedules = state.schedules.values.filter { s ->
+                s.id.contains("test", ignoreCase = true) ||
+                s.title.contains("test", ignoreCase = true) ||
+                s.raw_text != null
+            }
+
+            var nextSeq = db.eventDao().getNextSeq(deviceId)
+            for (item in testSchedules) {
+                val nowIso = getIsoNow()
+                val hlcNow = hlc.now()
+                val tombstone = SyncEventEntity(
+                    id = UUID.randomUUID().toString(),
+                    timestamp = nowIso,
+                    deviceId = deviceId,
+                    seq = nextSeq++,
+                    hlc = hlcNow,
+                    type = "schedule_deleted",
+                    entityId = item.id,
+                    payload = JSONObject().apply { put("reason", "bulk_cleanup") }.toString()
+                )
+                db.eventDao().insertEvent(tombstone)
+
+                withContext(Dispatchers.Main) {
+                    alarmScheduler.deleteScheduleAlerts(item.id)
+                }
             }
         }
     }

@@ -331,6 +331,37 @@ export function createDashboardHtml(data: {
         </div>
       </div>
 
+      <!-- Confirmed Schedules Section -->
+      <div class="card">
+        <div class="card-title">
+          <span>Confirmed Schedules (${confirmedCount})</span>
+          <span style="font-size: 0.8rem; color: var(--text-muted);">Edit or Delete confirmed events</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Title</th>
+              <th>Start Time</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${data.schedules.filter(s => s.status === 'CONFIRMED').map(s => `
+              <tr id="row-${escapeHtml(s.id)}">
+                <td><strong>${escapeHtml(s.title)}</strong></td>
+                <td>${escapeHtml(s.start || s.start_date || 'Unspecified')}</td>
+                <td><span class="badge badge-success">CONFIRMED</span></td>
+                <td>
+                  <button class="btn btn-sm btn-outline" onclick="editSchedule('${escapeHtml(s.id)}', '${escapeHtml(s.title)}', '${escapeHtml(s.start || '')}', ${s.has_alarm || false})">Edit</button>
+                  <button class="btn btn-sm btn-danger" onclick="deleteSchedule('${escapeHtml(s.id)}')">Delete</button>
+                </td>
+              </tr>
+            `).join('') || '<tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">No confirmed schedules yet. Confirm an event in the Pending tab!</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+
       <!-- Quick Recent Events -->
       <div class="card">
         <div class="card-title">Recent Event Log (Append-Only)</div>
@@ -355,6 +386,12 @@ export function createDashboardHtml(data: {
           </tbody>
         </table>
       </div>
+    </div>
+
+    <!-- Undo Banner for 10s -->
+    <div id="undoBanner" style="display: none; position: fixed; bottom: 20px; right: 20px; background: rgba(15, 23, 42, 0.95); border: 1px solid var(--accent); padding: 1rem 1.5rem; border-radius: 0.75rem; box-shadow: 0 10px 25px rgba(0,0,0,0.5); z-index: 1000; align-items: center; gap: 1rem;">
+      <span id="undoText" style="color: white; font-weight: 500;">Schedule deleted</span>
+      <button id="undoBtn" class="btn btn-sm btn-warning">Undo (10s)</button>
     </div>
 
     <!-- TAB 2: PENDING QUEUE -->
@@ -586,6 +623,74 @@ export function createDashboardHtml(data: {
       window.location.reload();
     }
 
+    let undoTimeout = null;
+    function showUndoToast(entityId) {
+      const banner = document.getElementById('undoBanner');
+      const undoBtn = document.getElementById('undoBtn');
+      if (!banner || !undoBtn) return;
+      banner.style.display = 'flex';
+      undoBtn.onclick = async () => {
+        if (undoTimeout) clearTimeout(undoTimeout);
+        banner.style.display = 'none';
+        await restoreSchedule(entityId);
+      };
+      if (undoTimeout) clearTimeout(undoTimeout);
+      undoTimeout = setTimeout(() => {
+        banner.style.display = 'none';
+        window.location.reload();
+      }, 10000);
+    }
+
+    async function deleteSchedule(id) {
+      if (!confirm('Are you sure you want to delete this confirmed schedule?')) return;
+      const res = await fetch('/api/schedules/' + id + '/delete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-csrf-token': CSRF_TOKEN
+        },
+        body: JSON.stringify({ reason: 'user' })
+      });
+      if (res.ok) {
+        const row = document.getElementById('row-' + id);
+        if (row) row.style.display = 'none';
+        showUndoToast(id);
+      }
+    }
+
+    async function restoreSchedule(id) {
+      await fetch('/api/schedules/' + id + '/restore', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-csrf-token': CSRF_TOKEN
+        }
+      });
+      window.location.reload();
+    }
+
+    async function editSchedule(id, currentTitle, currentStart, currentAlarm) {
+      const newTitle = prompt('Edit Schedule Title:', currentTitle);
+      if (newTitle === null) return;
+      const newStart = prompt('Edit ISO Start Time:', currentStart);
+      if (newStart === null) return;
+      const enableAlarm = confirm('Opt-in to audible Alarm? (OK for Alarm, Cancel for Reminder only)');
+
+      await fetch('/api/schedules/' + id + '/edit', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-csrf-token': CSRF_TOKEN
+        },
+        body: JSON.stringify({
+          title: newTitle.trim() || currentTitle,
+          start: newStart.trim() || currentStart,
+          has_alarm: enableAlarm
+        })
+      });
+      window.location.reload();
+    }
+
     async function testNotification() {
       const res = await fetch('/api/notifications/test', {
         method: 'POST',
@@ -723,6 +828,36 @@ export class LaptopServer {
         const parts = pathname.split('/');
         const entityId = parts[3];
         const success = this.pipeline.dismissSchedule(entityId);
+        return sendJson(200, { success });
+      }
+
+      if (pathname.startsWith('/api/schedules/') && pathname.endsWith('/delete') && method === 'POST') {
+        const parts = pathname.split('/');
+        const entityId = parts[3];
+        const body = await parseBody();
+        const success = this.pipeline.deleteSchedule(entityId, body.reason || 'user');
+        this.scheduler.checkAndTick();
+        return sendJson(200, { success });
+      }
+
+      if (pathname.startsWith('/api/schedules/') && pathname.endsWith('/edit') && method === 'POST') {
+        const parts = pathname.split('/');
+        const entityId = parts[3];
+        const body = await parseBody();
+        const success = this.pipeline.editSchedule(entityId, {
+          title: body.title,
+          start: body.start,
+          has_alarm: body.has_alarm
+        });
+        this.scheduler.checkAndTick();
+        return sendJson(200, { success });
+      }
+
+      if (pathname.startsWith('/api/schedules/') && pathname.endsWith('/restore') && method === 'POST') {
+        const parts = pathname.split('/');
+        const entityId = parts[3];
+        const success = this.pipeline.restoreSchedule(entityId);
+        this.scheduler.checkAndTick();
         return sendJson(200, { success });
       }
 

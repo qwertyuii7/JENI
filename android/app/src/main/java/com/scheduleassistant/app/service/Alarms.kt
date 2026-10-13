@@ -221,6 +221,64 @@ class AlarmScheduler(private val context: Context) {
     }
 
     /**
+     * Requirement 3: On delete, cancel reminder and alarm PendingIntents,
+     * stop ringing alarm, unregister scheduled count, and write audit row with action: delete.
+     */
+    fun deleteScheduleAlerts(scheduleId: String) {
+        val req1 = getAlarmRequestCode(scheduleId, 1)
+        val req2 = getAlarmRequestCode(scheduleId, 2)
+        val alarmIntent = Intent(context, AlarmReceiver::class.java)
+        val p1 = PendingIntent.getBroadcast(context, req1, alarmIntent, PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE)
+        val p2 = PendingIntent.getBroadcast(context, req2, alarmIntent, PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE)
+        p1?.let { alarmManager.cancel(it) }
+        p2?.let { alarmManager.cancel(it) }
+
+        AlarmRingingService.stopRinging(context, scheduleId)
+        DiagnosticsManager.unregisterScheduledAlerts(context, scheduleId)
+
+        recordAudit(
+            entityId = scheduleId,
+            triggerTime = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("UTC")
+            }.format(Date()),
+            api = "delete",
+            result = "SUCCESS",
+            errorMessage = "Cancelled alerts and stopped ringing for deleted schedule"
+        )
+    }
+
+    /**
+     * Requirement 4: On edit, cancel old alerts, reschedule new alerts, write audit row with action: edit.
+     */
+    fun editScheduleAlerts(schedule: ScheduleEntity, enableAlarm: Boolean = false): Boolean {
+        cancelAlertsForSchedule(schedule.id)
+        val scheduled = scheduleAlertsForSchedule(schedule, enableAlarm = enableAlarm)
+        recordAudit(
+            entityId = schedule.id,
+            triggerTime = schedule.start ?: "",
+            api = "edit",
+            result = if (scheduled) "SUCCESS" else "SKIPPED",
+            errorMessage = "Updated alerts for edited schedule"
+        )
+        return scheduled
+    }
+
+    /**
+     * Requirement 2: On undo / restore, reschedule alerts if start time is still in the future.
+     */
+    fun restoreScheduleAlerts(schedule: ScheduleEntity, enableAlarm: Boolean = false): Boolean {
+        val scheduled = scheduleAlertsForSchedule(schedule, enableAlarm = enableAlarm)
+        recordAudit(
+            entityId = schedule.id,
+            triggerTime = schedule.start ?: "",
+            api = "restore",
+            result = if (scheduled) "SUCCESS" else "SKIPPED",
+            errorMessage = "Restored alerts on undo"
+        )
+        return scheduled
+    }
+
+    /**
      * Requirement 2: Rescheduling an event replaces old reminder/alarm with new one.
      */
     fun rescheduleAlertsForSchedule(schedule: ScheduleEntity, enableAlarm: Boolean = false): Boolean {

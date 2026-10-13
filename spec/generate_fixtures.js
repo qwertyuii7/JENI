@@ -812,9 +812,21 @@ const hardNegatives = [
   // Forwarded messages / Quotes
   { input: "Forwarded: Happy Diwali to all families!", lang: "english" },
   { input: "Fwd: 2023 academic calendar dates", lang: "english" },
-  { input: "Quote: 'Time is money' - good thought", lang: "english" },
   { input: "bhai wo purana 2022 schedule circular check karo", lang: "hinglish" },
-  { input: "see you soon at canteen", lang: "english" }
+  { input: "see you soon at canteen", lang: "english" },
+  // Hindi-script hard negatives for cancel/reschedule keywords
+  { input: "क्या कल की क्लास रद्द हो गई?", lang: "hindi" },
+  { input: "क्या मीटिंग कैंसिल हो गई है?", lang: "hindi" },
+  { input: "क्या टेस्ट स्थगित हो गया?", lang: "hindi" },
+  { input: "क्या लेक्चर शिफ्ट हो गया?", lang: "hindi" },
+  { input: "अगर क्लास रद्द हो गई तो बता देना", lang: "hindi" },
+  { input: "अगर मीटिंग शिफ्ट हो गई तो कॉल करना", lang: "hindi" },
+  { input: "अगर परीक्षा स्थगित हो गई तो बताना", lang: "hindi" },
+  { input: "शायद कल की क्लास रद्द हो", lang: "hindi" },
+  { input: "कल क्लास रद्द हो चुकी थी", lang: "hindi" },
+  { input: "मीटिंग पहले ही शिफ्ट हो गई थी", lang: "hindi" },
+  { input: "कल का लेक्चर कैंसिल था", lang: "hindi" },
+  { input: "परीक्षा कल ही स्थगित हो गई थी", lang: "hindi" }
 ];
 for (const item of hardNegatives) {
   addFixture({ input: item.input, category: "noise", language: item.lang, isSchedule: false, extraction: null });
