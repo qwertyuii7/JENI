@@ -34,7 +34,8 @@ class DeviceHardeningRegressionTest {
         specLoader = SpecLoader(
             keywordsStreamProvider = { javaClass.classLoader!!.getResourceAsStream("spec/keywords.json")!! },
             synonymsStreamProvider = { javaClass.classLoader!!.getResourceAsStream("spec/synonyms.json")!! },
-            daypartsStreamProvider = { javaClass.classLoader!!.getResourceAsStream("spec/dayparts.json")!! }
+            daypartsStreamProvider = { javaClass.classLoader!!.getResourceAsStream("spec/dayparts.json")!! },
+            fillersStreamProvider = { javaClass.classLoader!!.getResourceAsStream("spec/fillers.json")!! }
         )
         prefilter = Prefilter(specLoader)
         parser = ScheduleParser(specLoader, prefilter)
@@ -405,11 +406,6 @@ class DeviceHardeningRegressionTest {
      */
     @Test
     fun testCancelOSLectureMatchesOSKiLectureByDroppingFiller() {
-        fun normalizeTitle(t: String): String = t.lowercase()
-            .replace(Regex("(?i)\\b(?:ki|ka|ke)\\b"), " ")
-            .replace(Regex("\\s+"), " ")
-            .trim()
-
         val osSchedule = ScheduleEntity(
             id = "sched-os-789",
             title = "OS ki lecture",
@@ -429,13 +425,28 @@ class DeviceHardeningRegressionTest {
         assertEquals("OS lecture", cancelExt.title)
 
         val targetTitle = cancelExt.title.lowercase().trim()
-        val cleanTarget = normalizeTitle(targetTitle)
+        val cleanTarget = specLoader.normalizeTitleForMatching(targetTitle)
+
+        fun areTitlesSynonyms(t1: String, t2: String): Boolean {
+            if (t1 == t2) return true
+            val w1 = t1.split(Regex("\\s+"))
+            val w2 = t2.split(Regex("\\s+"))
+            if (w1.size != w2.size) return false
+            for (i in w1.indices) {
+                if (w1[i] == w2[i]) continue
+                val syns = specLoader.intraTypeSynonyms[w1[i]] ?: emptyList()
+                if (!syns.contains(w2[i])) return false
+            }
+            return true
+        }
 
         val candidates = existingSchedules.filter { sched ->
             val sTitle = sched.title.lowercase().trim()
-            val cleanSched = normalizeTitle(sTitle)
+            val cleanSched = specLoader.normalizeTitleForMatching(sTitle)
             val isSynonym = specLoader.intraTypeSynonyms[targetTitle]?.contains(sTitle) == true ||
-                            specLoader.intraTypeSynonyms[cleanTarget]?.contains(cleanSched) == true
+                            specLoader.intraTypeSynonyms[cleanTarget]?.contains(cleanSched) == true ||
+                            areTitlesSynonyms(cleanSched, cleanTarget) ||
+                            areTitlesSynonyms(sTitle, targetTitle)
             sTitle == targetTitle || cleanSched == cleanTarget ||
             sTitle.contains(targetTitle) || targetTitle.contains(sTitle) ||
             cleanSched.contains(cleanTarget) || cleanTarget.contains(cleanSched) ||
@@ -445,5 +456,118 @@ class DeviceHardeningRegressionTest {
         assertEquals(1, candidates.size)
         assertEquals("sched-os-789", candidates[0].id)
         assertEquals("OS ki lecture", candidates[0].title)
+    }
+
+    /**
+     * VERIFY ITEM:
+     * Hindi-script cancel "OS की lecture रद्द हो गई" and "OS वाली क्लास रद्द हो गई"
+     * match "OS ki lecture" by dropping Devanagari filler particles and synonyms.
+     */
+    @Test
+    fun testCancelHindiScriptMatchesExistingEventByDroppingFiller() {
+        val osSchedule = ScheduleEntity(
+            id = "sched-os-789",
+            title = "OS ki lecture",
+            start = "2026-10-13T09:00:00+05:30",
+            status = ScheduleStatus.CONFIRMED,
+            source_quote = "kal 9 baje OS ki lecture",
+            confidence = 0.9,
+            created_at = "2026-10-12T10:00:00+05:30",
+            updated_at = "2026-10-12T10:00:00+05:30"
+        )
+        val existingSchedules = listOf(osSchedule)
+
+        fun areTitlesSynonyms(t1: String, t2: String): Boolean {
+            if (t1 == t2) return true
+            val w1 = t1.split(Regex("\\s+"))
+            val w2 = t2.split(Regex("\\s+"))
+            if (w1.size != w2.size) return false
+            for (i in w1.indices) {
+                if (w1[i] == w2[i]) continue
+                val syns = specLoader.intraTypeSynonyms[w1[i]] ?: emptyList()
+                if (!syns.contains(w2[i])) return false
+            }
+            return true
+        }
+
+        fun matchCandidates(cancelText: String): List<ScheduleEntity> {
+            val cancelExt = parser.parse(cancelText, "2026-10-12T12:00:00+05:30")
+            assertNotNull(cancelExt)
+            assertEquals("cancel", cancelExt!!.type)
+
+            val targetTitle = cancelExt.title.lowercase().trim()
+            val cleanTarget = specLoader.normalizeTitleForMatching(targetTitle)
+
+            return existingSchedules.filter { sched ->
+                val sTitle = sched.title.lowercase().trim()
+                val cleanSched = specLoader.normalizeTitleForMatching(sTitle)
+                val isSynonym = specLoader.intraTypeSynonyms[targetTitle]?.contains(sTitle) == true ||
+                                specLoader.intraTypeSynonyms[cleanTarget]?.contains(cleanSched) == true ||
+                                areTitlesSynonyms(cleanSched, cleanTarget) ||
+                                areTitlesSynonyms(sTitle, targetTitle)
+                sTitle == targetTitle || cleanSched == cleanTarget ||
+                sTitle.contains(targetTitle) || targetTitle.contains(sTitle) ||
+                cleanSched.contains(cleanTarget) || cleanTarget.contains(cleanSched) ||
+                isSynonym
+            }
+        }
+
+        // 1. "OS की lecture रद्द हो गई"
+        val cand1 = matchCandidates("OS की lecture रद्द हो गई")
+        assertEquals(1, cand1.size)
+        assertEquals("sched-os-789", cand1[0].id)
+        assertEquals("OS ki lecture", cand1[0].title)
+
+        // 2. "OS वाली क्लास रद्द हो गई"
+        val cand2 = matchCandidates("OS वाली क्लास रद्द हो गई")
+        assertEquals(1, cand2.size)
+        assertEquals("sched-os-789", cand2[0].id)
+        assertEquals("OS ki lecture", cand2[0].title)
+    }
+
+    /**
+     * VERIFY ITEM:
+     * Hindi-script reschedule "DBMS class सोमवार को स्थगित हो गई"
+     * matches existing "DBMS class" and inherits start time.
+     */
+    @Test
+    fun testRescheduleHindiScriptMatchesExistingEventAndInheritsTime() {
+        val dbmsSchedule = ScheduleEntity(
+            id = "sched-dbms-123",
+            title = "DBMS class",
+            start = "2026-10-13T16:00:00+05:30",
+            status = ScheduleStatus.CONFIRMED,
+            source_quote = "kal 4 baje dbms ki class hai",
+            confidence = 0.9,
+            created_at = "2026-10-12T10:00:00+05:30",
+            updated_at = "2026-10-12T10:00:00+05:30"
+        )
+        val existingSchedules = listOf(dbmsSchedule)
+
+        val reschedExt = parser.parse("DBMS class सोमवार को स्थगित हो गई", "2026-10-12T12:00:00+05:30")
+        assertNotNull(reschedExt)
+        assertEquals("reschedule", reschedExt!!.type)
+        assertEquals("DBMS class", reschedExt.title)
+        assertEquals("2026-10-19", reschedExt.start_date)
+        assertTrue(reschedExt.time_unspecified)
+
+        val targetTitle = reschedExt.title.lowercase().trim()
+        val cleanTarget = specLoader.normalizeTitleForMatching(targetTitle)
+
+        val candidates = existingSchedules.filter { sched ->
+            val sTitle = sched.title.lowercase().trim()
+            val cleanSched = specLoader.normalizeTitleForMatching(sTitle)
+            sTitle == targetTitle || cleanSched == cleanTarget ||
+            sTitle.contains(targetTitle) || targetTitle.contains(sTitle)
+        }
+
+        assertEquals(1, candidates.size)
+        val matched = candidates[0]
+        assertEquals("sched-dbms-123", matched.id)
+
+        // Time inheritance for time_unspecified
+        val origTime = matched.start!!.split("T")[1]
+        val effectiveStart = "${reschedExt.start_date}T$origTime"
+        assertEquals("2026-10-19T16:00:00+05:30", effectiveStart)
     }
 }

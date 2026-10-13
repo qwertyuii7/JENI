@@ -299,5 +299,122 @@ describe('Core Parser Fixtures Parity Test', () => {
     expect(matched!.id).toBe('sched-os-lecture');
     expect(matched!.title).toBe('OS ki lecture');
   });
+
+  it('correctly matches Hindi-script cancel "OS की lecture रद्द हो गई" against "OS ki lecture" by dropping Devanagari particle', () => {
+    const store = new EventStore();
+
+    store.addEvent({
+      id: 'ev-os-init',
+      timestamp: '2026-10-12T10:00:00+05:30',
+      device_id: 'phone',
+      type: 'event_extracted',
+      entity_id: 'sched-os-lecture',
+      payload: {
+        type: 'new',
+        title: 'OS ki lecture',
+        start: '2026-10-13T09:00:00+05:30',
+        confidence: 0.9,
+        source_quote: 'kal 9 baje OS ki lecture'
+      }
+    });
+    store.addEvent({
+      id: 'ev-os-conf',
+      timestamp: '2026-10-12T10:01:00+05:30',
+      device_id: 'phone',
+      type: 'event_confirmed',
+      entity_id: 'sched-os-lecture',
+      payload: {}
+    });
+
+    const parsedCancel = parseScheduleMessage('OS की lecture रद्द हो गई', '2026-10-12T12:00:00+05:30');
+    expect(parsedCancel).toBeDefined();
+    expect(parsedCancel!.type).toBe('cancel');
+    expect(parsedCancel!.title).toBe('OS की lecture');
+
+    const matched = store.matchTargetEntity(parsedCancel!.title);
+    expect(matched).toBeDefined();
+    expect(matched!.id).toBe('sched-os-lecture');
+    expect(matched!.title).toBe('OS ki lecture');
+  });
+
+  it('correctly matches Hindi-script cancel with "वाली" particle "OS वाली क्लास रद्द हो गई" against "OS ki lecture"', () => {
+    const store = new EventStore();
+
+    store.addEvent({
+      id: 'ev-os-init',
+      timestamp: '2026-10-12T10:00:00+05:30',
+      device_id: 'phone',
+      type: 'event_extracted',
+      entity_id: 'sched-os-lecture',
+      payload: {
+        type: 'new',
+        title: 'OS ki lecture',
+        start: '2026-10-13T09:00:00+05:30',
+        confidence: 0.9,
+        source_quote: 'kal 9 baje OS ki lecture'
+      }
+    });
+    store.addEvent({
+      id: 'ev-os-conf',
+      timestamp: '2026-10-12T10:01:00+05:30',
+      device_id: 'phone',
+      type: 'event_confirmed',
+      entity_id: 'sched-os-lecture',
+      payload: {}
+    });
+
+    const parsedCancel = parseScheduleMessage('OS वाली क्लास रद्द हो गई', '2026-10-12T12:00:00+05:30');
+    expect(parsedCancel).toBeDefined();
+    expect(parsedCancel!.type).toBe('cancel');
+    expect(parsedCancel!.title).toBe('OS वाली क्लास');
+
+    const matched = store.matchTargetEntity(parsedCancel!.title);
+    expect(matched).toBeDefined();
+    expect(matched!.id).toBe('sched-os-lecture');
+    expect(matched!.title).toBe('OS ki lecture');
+  });
+
+  it('correctly matches Hindi-script reschedule "DBMS class सोमवार को स्थगित हो गई" against "DBMS class"', () => {
+    const store = new EventStore();
+
+    store.addEvent({
+      id: 'ev-dbms-init',
+      timestamp: '2026-10-12T10:00:00+05:30',
+      device_id: 'phone',
+      type: 'event_extracted',
+      entity_id: 'sched-dbms-class',
+      payload: {
+        type: 'new',
+        title: 'DBMS class',
+        start: '2026-10-13T16:00:00+05:30',
+        confidence: 0.9,
+        source_quote: 'kal 4 baje dbms ki class hai'
+      }
+    });
+    store.addEvent({
+      id: 'ev-dbms-conf',
+      timestamp: '2026-10-12T10:01:00+05:30',
+      device_id: 'phone',
+      type: 'event_confirmed',
+      entity_id: 'sched-dbms-class',
+      payload: {}
+    });
+
+    const parsedReschedule = parseScheduleMessage('DBMS class सोमवार को स्थगित हो गई', '2026-10-12T12:00:00+05:30');
+    expect(parsedReschedule).toBeDefined();
+    expect(parsedReschedule!.type).toBe('reschedule');
+    expect(parsedReschedule!.title).toBe('DBMS class');
+    expect(parsedReschedule!.start_date).toBe('2026-10-19');
+
+    const matched = store.matchTargetEntity(parsedReschedule!.title);
+    expect(matched).toBeDefined();
+    expect(matched!.id).toBe('sched-dbms-class');
+    expect(matched!.title).toBe('DBMS class');
+
+    // Inherit original clock time (16:00:00) into new start date (2026-10-19)
+    const originalTime = matched!.start!.split('T')[1];
+    const newStart = `${parsedReschedule!.start_date}T${originalTime}`;
+    expect(newStart).toBe('2026-10-19T16:00:00+05:30');
+  });
 });
 

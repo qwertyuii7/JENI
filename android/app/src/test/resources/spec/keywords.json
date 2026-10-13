@@ -8,7 +8,8 @@
     "somvar", "mangalvar", "budhvar", "guruvar", "veervar", "shukravar", "shanivar", "ravivar",
     "agle", "कल", "परसों", "आज", "बजे", "सुबह", "दोपहर", "शाम", "रात",
     "सोमवार", "मंगलवार", "बुधवार", "गुरुवार", "शुक्रवार", "शनिवार", "रविवार", "अगले",
-    "क्लास", "मीटिंग", "टेस्ट", "परीक्षा", "कार्यशाला", "सेमिनार", "रद्द"
+    "क्लास", "मीटिंग", "टेस्ट", "परीक्षा", "कार्यशाला", "सेमिनार", "रद्द",
+    "कैंसिल", "स्थगित", "शिफ्ट", "लेक्चर"
   ],
   "known_subjects": [
     "Seminar on Cloud Computing", "Database backup maintenance", "Security audit walkthrough",
@@ -26,11 +27,20 @@
     "chemistry lab", "Chemistry lab", "chemistry practical",
     "Math exam", "math test", "math quiz", "DBMS class", "DBMS lecture", "DBMS quiz", "dbms ki class",
     "OS lecture", "OS class", "OS test", "OS ki lecture", "Board meeting", "Design sync", "Marketing review",
+    "OS ki class", "OS wali class", "OS की क्लास", "OS वाली क्लास", "OS की lecture", "OS का लेक्चर",
+    "DBMS ki lecture", "DBMS wali class", "DBMS की क्लास", "DBMS वाला लेक्चर",
     "AI workshop", "Budget meeting", "code review", "standup", "presentation", "webinar",
     "orientation", "kickoff", "workshop", "seminar", "interview", "meeting", "lecture",
     "classes", "class", "viva", "quiz", "exam", "test", "call", "lab", "flight", "assembly",
     "deployment", "holiday", "review", "sync",
     "योग कक्षा", "कार्यशाला", "प्रेजेंटेशन", "इंटरव्यू", "परीक्षा", "सेमिनार", "लेक्चर",
     "मीटिंग", "क्लास", "चर्चा", "टेस्ट", "कॉल", "लैब"
+  ],
+  "title_fillers": [
+    "ki", "ka", "ke",
+    "की", "का", "के",
+    "wali", "wala", "wale",
+    "vali", "vala", "vale",
+    "वाली", "वाला", "वाले"
   ]
 }

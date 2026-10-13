@@ -123,19 +123,30 @@ class IngestionPipeline(
         val candidates = mutableListOf<ScheduleEntity>()
         if (extraction.type == "cancel" || extraction.type == "reschedule") {
             val targetTitle = (extraction.target?.title ?: extraction.title).lowercase().trim()
-            fun normalizeTitle(t: String): String = t.lowercase()
-                .replace(Regex("(?i)\\b(?:ki|ka|ke)\\b"), " ")
-                .replace(Regex("\\s+"), " ")
-                .trim()
-            val cleanTarget = normalizeTitle(targetTitle)
+            val cleanTarget = specLoader.normalizeTitleForMatching(targetTitle)
             val existingSchedules = getProjectedSchedules()
+
+            fun areTitlesSynonyms(t1: String, t2: String): Boolean {
+                if (t1 == t2) return true
+                val w1 = t1.split(Regex("\\s+"))
+                val w2 = t2.split(Regex("\\s+"))
+                if (w1.size != w2.size) return false
+                for (i in w1.indices) {
+                    if (w1[i] == w2[i]) continue
+                    val syns = specLoader.intraTypeSynonyms[w1[i]] ?: emptyList()
+                    if (!syns.contains(w2[i])) return false
+                }
+                return true
+            }
 
             for (sched in existingSchedules.values) {
                 if (sched.status == ScheduleStatus.DISMISSED || sched.status == ScheduleStatus.CANCELLED) continue
                 val sTitle = sched.title.lowercase().trim()
-                val cleanSched = normalizeTitle(sTitle)
+                val cleanSched = specLoader.normalizeTitleForMatching(sTitle)
                 val isSynonym = specLoader.intraTypeSynonyms[targetTitle]?.contains(sTitle) == true ||
-                                specLoader.intraTypeSynonyms[cleanTarget]?.contains(cleanSched) == true
+                                specLoader.intraTypeSynonyms[cleanTarget]?.contains(cleanSched) == true ||
+                                areTitlesSynonyms(cleanSched, cleanTarget) ||
+                                areTitlesSynonyms(sTitle, targetTitle)
                 if (sTitle == targetTitle || cleanSched == cleanTarget ||
                     sTitle.contains(targetTitle) || targetTitle.contains(sTitle) ||
                     cleanSched.contains(cleanTarget) || cleanTarget.contains(cleanSched) ||

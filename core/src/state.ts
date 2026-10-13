@@ -1,5 +1,5 @@
 import { SyncEvent, ScheduleEntity, ExtractionOutput, ReminderEntity } from './types.js';
-import { synonymsSpec } from './spec_loader.js';
+import { synonymsSpec, titleFillers } from './spec_loader.js';
 
 // Flatten intra-type synonyms from spec
 const INTRA_TYPE_SYNONYMS: Record<string, string[]> = {};
@@ -9,12 +9,36 @@ for (const group of Object.values(synonymsSpec)) {
   }
 }
 
-export function normalizeTitleForMatching(title: string): string {
-  return title
-    .toLowerCase()
-    .replace(/\b(?:ki|ka|ke)\b/gi, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+export function normalizeTitleForMatching(title: string, fillers: string[] = titleFillers): string {
+  let normalized = title.toLowerCase();
+
+  const asciiFillers = fillers.filter(f => /^[\x00-\x7F]+$/.test(f));
+  const unicodeFillers = fillers.filter(f => !/^[\x00-\x7F]+$/.test(f));
+
+  if (asciiFillers.length > 0) {
+    const asciiRegex = new RegExp(`\\b(?:${asciiFillers.join('|')})\\b`, 'gi');
+    normalized = normalized.replace(asciiRegex, ' ');
+  }
+
+  if (unicodeFillers.length > 0) {
+    const unicodeRegex = new RegExp(`(?:(?<=^|[\\s\\p{P}])(?:${unicodeFillers.join('|')})(?=$|[\\s\\p{P}]))`, 'gui');
+    normalized = normalized.replace(unicodeRegex, ' ');
+  }
+
+  return normalized.replace(/\s+/g, ' ').trim();
+}
+
+function areTitlesSynonyms(t1: string, t2: string): boolean {
+  if (t1 === t2) return true;
+  const w1 = t1.split(/\s+/);
+  const w2 = t2.split(/\s+/);
+  if (w1.length !== w2.length) return false;
+  for (let i = 0; i < w1.length; i++) {
+    if (w1[i] === w2[i]) continue;
+    const syns = INTRA_TYPE_SYNONYMS[w1[i]] || [];
+    if (!syns.includes(w2[i])) return false;
+  }
+  return true;
 }
 
 export class EventStore {
@@ -106,7 +130,9 @@ export class EventStore {
         entityTitleNorm === normalizedTarget ||
         cleanEntity === cleanTarget ||
         targetSynonyms.includes(entityTitleNorm) ||
-        targetSynonyms.includes(cleanEntity)
+        targetSynonyms.includes(cleanEntity) ||
+        areTitlesSynonyms(cleanEntity, cleanTarget) ||
+        areTitlesSynonyms(entityTitleNorm, normalizedTarget)
       ) {
         return entity;
       }

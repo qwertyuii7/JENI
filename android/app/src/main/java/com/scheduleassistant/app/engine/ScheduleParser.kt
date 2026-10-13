@@ -90,8 +90,10 @@ class ScheduleParser(
 
         // 1. Classification
         var type = "new"
-        val isReschedule = Regex("(?i)\\b(shift ho gayi|shifted to|rescheduled to|postponed to|moved to|postpone ho gaya|postpone ho gayi)\\b").containsMatchIn(lower)
-        val isCancel = Regex("(?i)\\b(cancel ho gayi|cancel ho gaya|cancelled|canceled|cancel hai|called off|nahi hai|nahi hoga|no meeting|no lecture|no classes|no class)\\b").containsMatchIn(lower)
+        val isReschedule = Regex("(?i)\\b(shift ho gayi|shifted to|rescheduled to|postponed to|moved to|postpone ho gaya|postpone ho gayi)\\b").containsMatchIn(lower) ||
+                lower.contains("स्थगित") || lower.contains("शिफ्ट")
+        val isCancel = Regex("(?i)\\b(cancel ho gayi|cancel ho gaya|cancelled|canceled|cancel hai|called off|nahi hai|nahi hoga|no meeting|no lecture|no classes|no class)\\b").containsMatchIn(lower) ||
+                lower.contains("रद्द") || lower.contains("कैंसिल") || lower.contains("नहीं होगी") || lower.contains("नहीं होगा")
 
         if (isReschedule) {
             type = "reschedule"

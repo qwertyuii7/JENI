@@ -49,3 +49,26 @@ export const daypartsSpec = loadSpecJson<DaypartsSpec>('dayparts.json', {
 });
 
 export const synonymsSpec = loadSpecJson<SynonymsSpec>('synonyms.json', {});
+
+export interface FillersSpec {
+  title_fillers?: string[];
+  fillers?: string[];
+}
+
+export const fillersSpec = loadSpecJson<FillersSpec>('fillers.json', {
+  title_fillers: [
+    'ki', 'ka', 'ke',
+    'की', 'का', 'के',
+    'wali', 'wala', 'wale',
+    'vali', 'vala', 'vale',
+    'वाली', 'वाला', 'वाले'
+  ]
+});
+
+export const titleFillers: string[] = fillersSpec.title_fillers || fillersSpec.fillers || [
+  'ki', 'ka', 'ke',
+  'की', 'का', 'के',
+  'wali', 'wala', 'wale',
+  'vali', 'vala', 'vale',
+  'वाली', 'वाला', 'वाले'
+];

@@ -1,15 +1,18 @@
 {
   "classes": {
-    "class": ["lecture", "period", "session", "tutorial"],
-    "lecture": ["class", "period", "session", "tutorial"],
+    "class": ["lecture", "period", "session", "tutorial", "क्लास", "लेक्चर"],
+    "lecture": ["class", "period", "session", "tutorial", "क्लास", "लेक्चर"],
     "period": ["class", "lecture", "session"],
-    "session": ["class", "lecture", "period"]
+    "session": ["class", "lecture", "period"],
+    "क्लास": ["लेक्चर", "class", "lecture"],
+    "लेक्चर": ["क्लास", "lecture", "class"]
   },
   "meetings": {
-    "meeting": ["sync", "call", "discussion", "huddle", "standup"],
+    "meeting": ["sync", "call", "discussion", "huddle", "standup", "मीटिंग"],
     "sync": ["meeting", "call", "discussion", "standup"],
     "call": ["meeting", "sync", "discussion"],
     "discussion": ["meeting", "sync", "call"],
-    "standup": ["meeting", "sync"]
+    "standup": ["meeting", "sync"],
+    "मीटिंग": ["meeting", "sync", "call", "discussion"]
   }
 }

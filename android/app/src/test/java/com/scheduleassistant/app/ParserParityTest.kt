@@ -20,7 +20,8 @@ class ParserParityTest {
         specLoader = SpecLoader(
             keywordsStreamProvider = { javaClass.classLoader!!.getResourceAsStream("spec/keywords.json")!! },
             synonymsStreamProvider = { javaClass.classLoader!!.getResourceAsStream("spec/synonyms.json")!! },
-            daypartsStreamProvider = { javaClass.classLoader!!.getResourceAsStream("spec/dayparts.json")!! }
+            daypartsStreamProvider = { javaClass.classLoader!!.getResourceAsStream("spec/dayparts.json")!! },
+            fillersStreamProvider = { javaClass.classLoader!!.getResourceAsStream("spec/fillers.json")!! }
         )
         prefilter = Prefilter(specLoader)
         parser = ScheduleParser(specLoader, prefilter)

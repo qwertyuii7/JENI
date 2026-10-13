@@ -1001,6 +1001,123 @@ for (const item of mixedInjections) {
   });
 }
 
+// Subject noun fixtures (physics lab, dbms ki class, chemistry practical, OS ki lecture)
+addFixture({
+  input: "kal 6 baje physics lab hai",
+  sourceQuote: "kal 6 baje physics lab",
+  category: "schedule_new",
+  language: "hinglish",
+  isSchedule: true,
+  extraction: {
+    type: "new",
+    title: "physics lab",
+    start: makeIST(2026, 10, 13, 18),
+    confidence: 0.9
+  }
+});
+addFixture({
+  input: "kal 4 baje dbms ki class hai",
+  sourceQuote: "kal 4 baje dbms ki class",
+  category: "schedule_new",
+  language: "hinglish",
+  isSchedule: true,
+  extraction: {
+    type: "new",
+    title: "DBMS class",
+    start: makeIST(2026, 10, 13, 16),
+    confidence: 0.9
+  }
+});
+addFixture({
+  input: "kal 2 baje chemistry practical hai",
+  sourceQuote: "kal 2 baje chemistry practical",
+  category: "schedule_new",
+  language: "hinglish",
+  isSchedule: true,
+  extraction: {
+    type: "new",
+    title: "chemistry practical",
+    start: makeIST(2026, 10, 13, 14),
+    confidence: 0.9
+  }
+});
+addFixture({
+  input: "kal 9 baje OS ki lecture",
+  sourceQuote: "kal 9 baje OS ki lecture",
+  category: "schedule_new",
+  language: "hinglish",
+  isSchedule: true,
+  extraction: {
+    type: "new",
+    title: "OS ki lecture",
+    start: makeIST(2026, 10, 13, 9),
+    confidence: 0.9
+  }
+});
+
+// Hindi-script cancel and reschedule fixtures against existing events
+addFixture({
+  input: "OS की lecture रद्द हो गई",
+  sourceQuote: "OS की lecture रद्द",
+  category: "schedule_cancel",
+  language: "hindi",
+  isSchedule: true,
+  extraction: {
+    type: "cancel",
+    title: "OS की lecture",
+    start_date: makeDateOnly(2026, 10, 12),
+    time_unspecified: true,
+    target: { title: "OS की lecture" },
+    confidence: 0.9
+  }
+});
+addFixture({
+  input: "DBMS class सोमवार को स्थगित हो गई",
+  sourceQuote: "सोमवार को स्थगित",
+  category: "schedule_reschedule",
+  language: "hindi",
+  isSchedule: true,
+  extraction: {
+    type: "reschedule",
+    title: "DBMS class",
+    start_date: makeDateOnly(2026, 10, 19),
+    time_unspecified: true,
+    ambiguous: true,
+    target: { title: "DBMS class" },
+    confidence: 0.65
+  }
+});
+addFixture({
+  input: "मीटिंग शुक्रवार 11 बजे शिफ्ट हो गई",
+  sourceQuote: "शुक्रवार 11 बजे शिफ्ट",
+  category: "schedule_reschedule",
+  language: "hindi",
+  isSchedule: true,
+  extraction: {
+    type: "reschedule",
+    title: "मीटिंग",
+    start: makeIST(2026, 10, 16, 11),
+    start_date: makeDateOnly(2026, 10, 16),
+    target: { title: "मीटिंग" },
+    confidence: 0.9
+  }
+});
+addFixture({
+  input: "OS वाली क्लास रद्द हो गई",
+  sourceQuote: "OS वाली क्लास रद्द",
+  category: "schedule_cancel",
+  language: "hindi",
+  isSchedule: true,
+  extraction: {
+    type: "cancel",
+    title: "OS वाली क्लास",
+    start_date: makeDateOnly(2026, 10, 12),
+    time_unspecified: true,
+    target: { title: "OS वाली क्लास" },
+    confidence: 0.9
+  }
+});
+
 const outDir = path.join(__dirname, 'fixtures');
 if (!fs.existsSync(outDir)) {
   fs.mkdirSync(outDir, { recursive: true });

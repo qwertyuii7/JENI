@@ -110,7 +110,8 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
         val specLoader = SpecLoader(
             keywordsStreamProvider = { assets.open("spec/keywords.json") },
             synonymsStreamProvider = { assets.open("spec/synonyms.json") },
-            daypartsStreamProvider = { assets.open("spec/dayparts.json") }
+            daypartsStreamProvider = { assets.open("spec/dayparts.json") },
+            fillersStreamProvider = { assets.open("spec/fillers.json") }
         )
         prefilter = Prefilter(specLoader)
         parser = ScheduleParser(specLoader, prefilter)

@@ -116,10 +116,16 @@ Launch **Schedule Assistant** -> tap **Diagnostics** tab (bottom right) and veri
 ### Device Testing Fixes (Galaxy A15 5G):
 - [ ] **Title Extraction Subject Retention**:
   - "kal 6 baje physics lab hai" -> extracts title `"physics lab"` (needs owner verification)
-  - "dbms ki class hai" -> extracts title `"DBMS class"` (needs owner verification)
+  - "dbms ki class hai" -> extracts title `"DBMS
+   class"` (needs owner verification)
   - "chemistry practical" -> extracts title `"chemistry practical"` (needs owner verification)
   - "OS ki lecture" -> extracts title `"OS ki lecture"` (needs owner verification)
   - Cancel/reschedule matching does not merge "physics lab" with "chemistry lab" (needs owner verification)
+- [ ] **Filler Words & Hindi Cancel/Reschedule Ingestion**:
+  - Title fillers (`ki/ka/ke`, Devanagari particles `की/का/के`, and Hinglish fillers `wali/wala/wale`, `वाली/वाला/वाले`) loaded from `/spec/fillers.json` into core and Kotlin app (needs owner verification)
+  - "OS lecture cancelled", "OS की lecture रद्द हो गई", and "OS वाली क्लास रद्द हो गई" match existing "OS ki lecture" (needs owner verification)
+  - Hindi reschedule "DBMS class सोमवार को स्थगित हो गई" matches existing "DBMS class" and inherits original clock time (needs owner verification)
+  - Physics lab and chemistry lab strictly maintain non-merging separation (needs owner verification)
 - [ ] **Log-Only Home Visibility & First-Run Prompt**:
   - Fresh install defaults to Log-only mode ON (needs owner verification)
   - Persistent Home banner displayed: "Log-only ON: no alerts will be created" (needs owner verification)

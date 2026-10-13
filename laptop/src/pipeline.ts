@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import {
   parseScheduleMessage,
   prefilterMessage,
+  normalizeTitleForMatching,
   ExtractionOutput,
   SyncEvent,
   HybridLogicalClock
@@ -172,13 +173,12 @@ export class IngestionPipeline {
       const allEvents = this.db.getAllEvents();
       const { schedules } = ProjectionEngine.projectState(allEvents);
       const targetTitle = (extraction.target?.title || extraction.title).toLowerCase().trim();
-      const normalizeTitle = (t: string) => t.toLowerCase().replace(/\b(?:ki|ka|ke)\b/gi, ' ').replace(/\s+/g, ' ').trim();
-      const cleanTarget = normalizeTitle(targetTitle);
+      const cleanTarget = normalizeTitleForMatching(targetTitle);
 
       for (const sched of schedules.values()) {
         if (sched.status === 'DISMISSED' || sched.status === 'CANCELLED') continue;
         const schedTitle = sched.title.toLowerCase().trim();
-        const cleanSched = normalizeTitle(sched.title);
+        const cleanSched = normalizeTitleForMatching(sched.title);
         if (
           schedTitle === targetTitle || schedTitle.includes(targetTitle) || targetTitle.includes(schedTitle) ||
           cleanSched === cleanTarget || cleanSched.includes(cleanTarget) || cleanTarget.includes(cleanSched)

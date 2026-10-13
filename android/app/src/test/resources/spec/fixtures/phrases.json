@@ -3375,5 +3375,90 @@
         "source_quote": "kal 9 baje OS ki lecture"
       }
     }
+  },
+  {
+    "id": "fix-214",
+    "input": "OS की lecture रद्द हो गई",
+    "reference_now": "2026-10-12T10:00:00+05:30",
+    "category": "schedule_cancel",
+    "language": "hindi",
+    "expected": {
+      "is_schedule": true,
+      "extraction": {
+        "type": "cancel",
+        "title": "OS की lecture",
+        "start_date": "2026-10-12",
+        "time_unspecified": true,
+        "target": {
+          "title": "OS की lecture"
+        },
+        "confidence": 0.9,
+        "source_quote": "OS की lecture रद्द"
+      }
+    }
+  },
+  {
+    "id": "fix-215",
+    "input": "DBMS class सोमवार को स्थगित हो गई",
+    "reference_now": "2026-10-12T10:00:00+05:30",
+    "category": "schedule_reschedule",
+    "language": "hindi",
+    "expected": {
+      "is_schedule": true,
+      "extraction": {
+        "type": "reschedule",
+        "title": "DBMS class",
+        "start_date": "2026-10-19",
+        "time_unspecified": true,
+        "ambiguous": true,
+        "target": {
+          "title": "DBMS class"
+        },
+        "confidence": 0.65,
+        "source_quote": "सोमवार को स्थगित"
+      }
+    }
+  },
+  {
+    "id": "fix-216",
+    "input": "मीटिंग शुक्रवार 11 बजे शिफ्ट हो गई",
+    "reference_now": "2026-10-12T10:00:00+05:30",
+    "category": "schedule_reschedule",
+    "language": "hindi",
+    "expected": {
+      "is_schedule": true,
+      "extraction": {
+        "type": "reschedule",
+        "title": "मीटिंग",
+        "start": "2026-10-16T11:00:00+05:30",
+        "start_date": "2026-10-16",
+        "target": {
+          "title": "मीटिंग"
+        },
+        "confidence": 0.9,
+        "source_quote": "शुक्रवार 11 बजे शिफ्ट"
+      }
+    }
+  },
+  {
+    "id": "fix-217",
+    "input": "OS वाली क्लास रद्द हो गई",
+    "reference_now": "2026-10-12T10:00:00+05:30",
+    "category": "schedule_cancel",
+    "language": "hindi",
+    "expected": {
+      "is_schedule": true,
+      "extraction": {
+        "type": "cancel",
+        "title": "OS वाली क्लास",
+        "start_date": "2026-10-12",
+        "time_unspecified": true,
+        "target": {
+          "title": "OS वाली क्लास"
+        },
+        "confidence": 0.9,
+        "source_quote": "OS वाली क्लास रद्द"
+      }
+    }
   }
 ]

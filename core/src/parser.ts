@@ -68,8 +68,10 @@ export function parseScheduleMessage(
 
   // 1. Classification
   let type: 'new' | 'cancel' | 'reschedule' = 'new';
-  const isReschedule = /\b(shift ho gayi|shifted to|rescheduled to|postponed to|moved to|postpone ho gaya|postpone ho gayi)\b/i.test(lower);
-  const isCancel = /\b(cancel ho gayi|cancel ho gaya|cancelled|canceled|cancel hai|called off|nahi hai|nahi hoga|no meeting|no lecture|no classes|no class)\b/i.test(lower);
+  const isReschedule = /\b(shift ho gayi|shifted to|rescheduled to|postponed to|moved to|postpone ho gaya|postpone ho gayi)\b/i.test(lower)
+    || lower.includes('स्थगित') || lower.includes('शिफ्ट');
+  const isCancel = /\b(cancel ho gayi|cancel ho gaya|cancelled|canceled|cancel hai|called off|nahi hai|nahi hoga|no meeting|no lecture|no classes|no class)\b/i.test(lower)
+    || lower.includes('रद्द') || lower.includes('कैंसिल') || lower.includes('नहीं होगी') || lower.includes('नहीं होगा');
 
   if (isReschedule) {
     type = 'reschedule';
@@ -343,8 +345,8 @@ export function parseScheduleMessage(
   // 6. Minimal source_quote
   let sourceQuote = text;
   const quoteCandidates = [
-    new RegExp(`(?:kal|parso|tarso|aaj|tomorrow|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday|सोमवार|कल|परसों|आज)\\s+.*?(?:${title}|class|meeting|lecture|test|quiz|viva|lab|sync)`, 'i'),
-    new RegExp(`(?:${title}|class|meeting|lecture|test|quiz|viva|lab|sync)\\s+.*?(?:tomorrow|today|friday|monday|tuesday|wednesday|thursday|saturday|sunday|kal|parso|aaj)`, 'i')
+    new RegExp(`(?:kal|parso|tarso|aaj|tomorrow|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday|सोमवार|मंगलवार|बुधवार|गुरुवार|शुक्रवार|शनिवार|रविवार|कल|परसों|आज)\\s+.*?(?:${title}|class|meeting|lecture|test|quiz|viva|lab|sync|क्लास|मीटिंग|लेक्चर|रद्द|स्थगित|शिफ्ट)`, 'i'),
+    new RegExp(`(?:${title}|class|meeting|lecture|test|quiz|viva|lab|sync|क्लास|मीटिंग|लेक्चर)\\s+.*?(?:tomorrow|today|friday|monday|tuesday|wednesday|thursday|saturday|sunday|kal|parso|aaj|सोमवार|मंगलवार|बुधवार|गुरुवार|शुक्रवार|शनिवार|रविवार|कल|परसों|आज|रद्द|स्थगित|शिफ्ट)`, 'i')
   ];
 
   for (const cand of quoteCandidates) {
