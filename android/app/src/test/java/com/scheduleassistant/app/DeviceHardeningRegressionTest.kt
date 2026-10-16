@@ -696,4 +696,69 @@ class DeviceHardeningRegressionTest {
         assertTrue("Active schedule must be recovered on boot", restoredByBoot.contains(activeEntityId))
         assertEquals(1, restoredByBoot.size)
     }
+
+    /**
+     * Regression Test for User Bug:
+     * "Today's class timing 7:15 to 08:00pm" and "7:15 - 8:00pm"
+     * MUST extract start as 7:15 PM (19:15:00), NOT end time 8:00 PM (20:00:00)!
+     */
+    @Test
+    fun testTimeIntervalParsing() {
+        val refTime = "2026-10-14T18:00:00+05:30"
+
+        // Case 1: "7:15 to 08:00pm"
+        val text1 = "🔗 Meet | Today's class timing \n 7:15 to 08:00pm \n\nhttps://meet.google.com/qno-cxav-uff"
+        val out1 = parser.parse(text1, referenceNow = refTime)
+        assertNotNull("Should parse interval", out1)
+        assertEquals("class", out1?.title)
+        assertEquals("2026-10-14T19:15:00+05:30", out1?.start)
+        assertEquals("2026-10-14T20:00:00+05:30", out1?.end)
+
+        // Case 2: "7:15 - 8:00pm"
+        val text2 = "🔗 Meet | Today's class timing \n 7:15 - 8:00pm \n\nhttps://meet.google.com/trj-osvy-rsm"
+        val out2 = parser.parse(text2, referenceNow = refTime)
+        assertNotNull("Should parse hyphenated interval", out2)
+        assertEquals("class", out2?.title)
+        assertEquals("2026-10-14T19:15:00+05:30", out2?.start)
+        assertEquals("2026-10-14T20:00:00+05:30", out2?.end)
+
+        // Case 3: "kal Class 10 to 11 am"
+        val text3 = "kal Class 10 to 11 am"
+        val out3 = parser.parse(text3, referenceNow = refTime)
+        assertNotNull("Should parse morning interval", out3)
+        assertEquals("2026-10-15T10:00:00+05:30", out3?.start)
+        assertEquals("2026-10-15T11:00:00+05:30", out3?.end)
+
+        // Case 4: "shaam 6 to 7 baje"
+        val text4 = "kal shaam 6 to 7 baje meeting"
+        val out4 = parser.parse(text4, referenceNow = refTime)
+        assertNotNull("Should parse evening baje interval", out4)
+        assertEquals("2026-10-15T18:00:00+05:30", out4?.start)
+        assertEquals("2026-10-15T19:00:00+05:30", out4?.end)
+    }
+
+    /**
+     * Regression Test for User Bug:
+     * Notification arriving on Oct 14 parsed with dynamic device time
+     * must resolve "Today" to Oct 14, NOT the hardcoded default Oct 12!
+     * When resolved to Oct 14, start 19:15:00 is in the FUTURE relative to 18:01:00,
+     * so AlarmScheduler will NOT skip it with "Event start time is already in the past"!
+     */
+    @Test
+    fun testDynamicReferenceDateResolution() {
+        val dynamicLocalTime = "2026-10-14T18:01:00+05:30"
+        val text = "Today's class timing 7:15 to 08:00pm"
+
+        val out = parser.parse(text, referenceNow = dynamicLocalTime)
+        assertNotNull(out)
+        assertEquals("2026-10-14", out?.start_date)
+        assertEquals("2026-10-14T19:15:00+05:30", out?.start)
+
+        val triggerMs = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).parse(out!!.start!!)!!.time
+        val currentMs = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).parse(dynamicLocalTime)!!.time
+
+        assertTrue("Trigger time must be in the future relative to notification arrival time", triggerMs > currentMs)
+        val diffMinutes = (triggerMs - currentMs) / (1000 * 60)
+        assertEquals("Event should be exactly 74 minutes in the future", 74L, diffMinutes)
+    }
 }

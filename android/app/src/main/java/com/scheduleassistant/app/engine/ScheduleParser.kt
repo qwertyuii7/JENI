@@ -153,6 +153,8 @@ class ScheduleParser(
         // 3. Time Parsing
         var hour: Int? = null
         var minute = 0
+        var endHour: Int? = null
+        var endMinute = 0
         var timeUnspecified = false
         var isAmbiguous = false
         var originalHour: Int? = null
@@ -162,6 +164,23 @@ class ScheduleParser(
         val isDeadline = Regex("(?i)\\b(deadline)\\b").containsMatchIn(lower)
 
         val multiTimeMatch = Regex("(?i)(\\d{1,2})(?::(\\d{2}))?\\s*(?:baje|बजे)\\s*wali.*?(\\d{1,2})(?::(\\d{2}))?\\s*(?:baje|बजे)\\s*(?:shift|postpone)").find(lower)
+        val timeRangeMatch = Regex("(?i)(?:(subah|dopahar|shaam|sham|raat|सुबह|दोपहर|शाम|रात)\\s+)?\\b(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)?\\s*(?:to|until|till|-|–|—|se|से)\\s*(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm|baje|बजे)?\\b").find(lower)
+
+        val rangeStartH = timeRangeMatch?.groupValues?.getOrNull(2)?.toIntOrNull()
+        val rangeStartM = timeRangeMatch?.groupValues?.getOrNull(3)?.toIntOrNull() ?: 0
+        val rangeStartMer = timeRangeMatch?.groupValues?.getOrNull(4)?.ifBlank { null }?.lowercase()
+        val rangeEndH = timeRangeMatch?.groupValues?.getOrNull(5)?.toIntOrNull()
+        val rangeEndM = timeRangeMatch?.groupValues?.getOrNull(6)?.toIntOrNull() ?: 0
+        val rangeEndMer = timeRangeMatch?.groupValues?.getOrNull(7)?.ifBlank { null }?.lowercase()
+        val rangeDaypart = timeRangeMatch?.groupValues?.getOrNull(1)?.ifBlank { null }?.lowercase()
+
+        val isValidTimeRange = timeRangeMatch != null && rangeStartH != null && rangeEndH != null && (
+            rangeStartMer != null ||
+            rangeEndMer != null ||
+            rangeDaypart != null ||
+            timeRangeMatch.groupValues.getOrNull(3)?.isNotBlank() == true
+        )
+
         if (multiTimeMatch != null) {
             val origH = multiTimeMatch.groupValues[1].toInt()
             originalHour = if (origH <= 6) origH + 12 else origH
@@ -169,6 +188,57 @@ class ScheduleParser(
             val newH = multiTimeMatch.groupValues[3].toInt()
             hour = if (newH <= 6) newH + 12 else newH
             minute = multiTimeMatch.groupValues[4].toIntOrNull() ?: 0
+        } else if (isValidTimeRange && rangeStartH != null && rangeEndH != null) {
+            var sH = rangeStartH
+            var eH = rangeEndH
+            minute = rangeStartM
+            endMinute = rangeEndM
+
+            val isRangeEvening = rangeDaypart in listOf("shaam", "sham", "sanjh", "evening", "शाम")
+            val isRangeMorning = rangeDaypart in listOf("subah", "pratah", "morning", "am", "सुबह")
+            val isRangeAfternoon = rangeDaypart in listOf("dopahar", "afternoon", "noon", "दोपहर")
+            val isRangeNight = rangeDaypart in listOf("raat", "night", "रात")
+
+            if (rangeEndMer == "pm") {
+                if (eH < 12) eH += 12
+                if (rangeStartMer == "am") {
+                    if (sH == 12) sH = 0
+                } else if (rangeStartMer == "pm") {
+                    if (sH < 12) sH += 12
+                } else {
+                    if (sH == 12) {
+                        sH = 12
+                    } else if (rangeStartH <= rangeEndH) {
+                        if (sH < 12) sH += 12
+                    }
+                }
+            } else if (rangeEndMer == "am") {
+                if (eH == 12) eH = 0
+                if (rangeStartMer == "pm") {
+                    if (sH < 12) sH += 12
+                } else {
+                    if (sH == 12) sH = 0
+                }
+            } else if (isRangeEvening || isRangeNight) {
+                if (sH < 12) sH += 12
+                if (eH < 12) eH += 12
+            } else if (isRangeAfternoon) {
+                if (sH in 1..11) sH += 12
+                if (eH in 1..11) eH += 12
+            } else if (isRangeMorning) {
+                if (sH == 12) sH = 0
+                if (eH == 12) eH = 0
+            } else {
+                if (rangeStartMer == "pm" && sH < 12) sH += 12
+                if (rangeStartMer == "am" && sH == 12) sH = 0
+                if (rangeStartMer == null && rangeEndMer == null) {
+                    if (sH in 1..6) sH += 12
+                    if (eH in 1..6) eH += 12
+                }
+            }
+
+            hour = sH
+            endHour = eH
         } else {
             val bajeMatch = Regex("(?i)(?:(subah|dopahar|shaam|sham|raat|सुबह|दोपहर|शाम|रात)\\s+)?(\\d{1,2})(?::(\\d{2}))?\\s*(?:baje|pe|बजे)").find(lower)
             val ampmMatch = Regex("(?i)\\b(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)\\b").find(lower)
@@ -294,6 +364,10 @@ class ScheduleParser(
         if (!timeUnspecified && hour != null) {
             startIso = String.format(Locale.US, "%sT%02d:%02d:00+05:30", startDateStr, hour, minute)
         }
+        var endIso: String? = null
+        if (!timeUnspecified && endHour != null) {
+            endIso = String.format(Locale.US, "%sT%02d:%02d:00+05:30", startDateStr, endHour, endMinute)
+        }
 
         // 5. Subject / Title Extraction
         var title = "event"
@@ -402,6 +476,7 @@ class ScheduleParser(
             title = title,
             start = startIso,
             start_date = startDateStr,
+            end = endIso,
             time_unspecified = timeUnspecified,
             ambiguous = isAmbiguous,
             target = target,

@@ -41,6 +41,7 @@ object ProjectionEngine {
                     val title = ev.payload["title"] as? String ?: "event"
                     val start = ev.payload["start"] as? String
                     val startDate = ev.payload["start_date"] as? String
+                    val end = ev.payload["end"] as? String
                     val timeUnspecified = ev.payload["time_unspecified"] as? Boolean ?: false
                     val ambiguous = ev.payload["ambiguous"] as? Boolean ?: false
                     val quote = ev.payload["source_quote"] as? String ?: ""
@@ -52,6 +53,7 @@ object ProjectionEngine {
                         title = title,
                         start = start,
                         start_date = startDate,
+                        end = end,
                         time_unspecified = timeUnspecified,
                         ambiguous = ambiguous,
                         status = ScheduleStatus.PENDING,

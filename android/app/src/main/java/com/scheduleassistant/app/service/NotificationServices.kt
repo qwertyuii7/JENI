@@ -195,6 +195,10 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
                 timeZone = TimeZone.getTimeZone("UTC")
             }.format(Date())
 
+            val localIsoNow = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).apply {
+                timeZone = TimeZone.getDefault()
+            }.format(Date())
+
             val db = AppDatabase.getInstance(applicationContext)
 
             for (dec in decisions) {
@@ -205,7 +209,7 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
                     val msg = dec.message
                     val filterResult = prefilter.prefilter(msg.cleanText)
                     prefilterResult = if (filterResult.shouldParse) "passed" else (filterResult.reason ?: "rejected")
-                    val extraction = if (filterResult.shouldParse) parser.parse(msg.cleanText) else null
+                    val extraction = if (filterResult.shouldParse) parser.parse(msg.cleanText, referenceNow = localIsoNow) else null
 
                     parserOutputJson = extraction?.let { ext ->
                         JSONObject().apply {
@@ -213,6 +217,7 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
                             put("title", ext.title)
                             put("start", ext.start)
                             put("start_date", ext.start_date)
+                            put("end", ext.end)
                             put("time_unspecified", ext.time_unspecified)
                             put("ambiguous", ext.ambiguous)
                             put("confidence", ext.confidence)
@@ -243,7 +248,7 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
                             RawMessageEntity(id = rawMsgId, rawText = msg.rawText, source = "whatsapp", createdAt = nowIso)
                         )
 
-                        val result = pipeline.processMessage(msg.cleanText)
+                        val result = pipeline.processMessage(msg.cleanText, referenceNow = localIsoNow)
 
                         if (result.status == "PENDING" && result.entityId != null) {
                             val nextSeq = db.eventDao().getNextSeq("android-phone")
@@ -254,6 +259,7 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
                                 put("title", result.extraction?.title)
                                 put("start", result.extraction?.start)
                                 put("start_date", result.extraction?.start_date)
+                                put("end", result.extraction?.end)
                                 put("time_unspecified", result.extraction?.time_unspecified)
                                 put("ambiguous", result.extraction?.ambiguous)
                                 put("source_quote", result.extraction?.source_quote)

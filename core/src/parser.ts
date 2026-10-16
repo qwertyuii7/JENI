@@ -135,6 +135,8 @@ export function parseScheduleMessage(
   // 3. Time Parsing
   let hour: number | null = null;
   let minute: number = 0;
+  let endHour: number | null = null;
+  let endMinute: number = 0;
   let timeUnspecified = false;
   let isAmbiguous = false;
   let originalHour: number | null = null;
@@ -149,6 +151,26 @@ export function parseScheduleMessage(
 
   // Multi-time reschedule pattern: "kal ki 3 baje wali class 5 baje shift ho gayi"
   const multiTimeMatch = lower.match(/(\d{1,2})(?::(\d{2}))?\s*(?:baje|बजे)\s*wali.*?(\d{1,2})(?::(\d{2}))?\s*(?:baje|बजे)\s*(?:shift|postpone)/i);
+  // Time range pattern: "7:15 to 08:00pm", "7:15 - 8:00pm", "7 to 8pm", "10:00 to 11:30am", "11:00am - 1:00pm", "shaam 6 to 7 baje"
+  const timeRangeMatch = lower.match(
+    /(?:(subah|dopahar|shaam|sham|raat|सुबह|दोपहर|शाम|रात)\s+)?\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:to|until|till|-|–|—|se|से)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm|baje|बजे)?\b/i
+  );
+
+  const rangeStartH = timeRangeMatch ? Number(timeRangeMatch[2]) : null;
+  const rangeStartM = timeRangeMatch && timeRangeMatch[3] ? Number(timeRangeMatch[3]) : 0;
+  const rangeStartMer = timeRangeMatch && timeRangeMatch[4] ? timeRangeMatch[4].toLowerCase() : undefined;
+  const rangeEndH = timeRangeMatch ? Number(timeRangeMatch[5]) : null;
+  const rangeEndM = timeRangeMatch && timeRangeMatch[6] ? Number(timeRangeMatch[6]) : 0;
+  const rangeEndMer = timeRangeMatch && timeRangeMatch[7] ? timeRangeMatch[7].toLowerCase() : undefined;
+  const rangeDaypart = timeRangeMatch && timeRangeMatch[1] ? timeRangeMatch[1].toLowerCase() : undefined;
+
+  const isValidTimeRange = timeRangeMatch !== null && rangeStartH !== null && rangeEndH !== null && (
+    rangeStartMer !== undefined ||
+    rangeEndMer !== undefined ||
+    rangeDaypart !== undefined ||
+    timeRangeMatch[3] !== undefined
+  );
+
   if (multiTimeMatch) {
     const origH = Number(multiTimeMatch[1]);
     originalHour = origH <= 6 ? origH + 12 : origH;
@@ -156,6 +178,57 @@ export function parseScheduleMessage(
     const newH = Number(multiTimeMatch[3]);
     hour = newH <= 6 ? newH + 12 : newH;
     minute = multiTimeMatch[4] ? Number(multiTimeMatch[4]) : 0;
+  } else if (isValidTimeRange && rangeStartH !== null && rangeEndH !== null) {
+    let sH = rangeStartH;
+    let eH = rangeEndH;
+    minute = rangeStartM;
+    endMinute = rangeEndM;
+
+    const isRangeEvening = rangeDaypart === 'shaam' || rangeDaypart === 'sham' || rangeDaypart === 'sanjh' || rangeDaypart === 'evening' || rangeDaypart === 'शाम';
+    const isRangeMorning = rangeDaypart === 'subah' || rangeDaypart === 'pratah' || rangeDaypart === 'morning' || rangeDaypart === 'am' || rangeDaypart === 'सुबह';
+    const isRangeAfternoon = rangeDaypart === 'dopahar' || rangeDaypart === 'afternoon' || rangeDaypart === 'noon' || rangeDaypart === 'दोपहर';
+    const isRangeNight = rangeDaypart === 'raat' || rangeDaypart === 'night' || rangeDaypart === 'रात';
+
+    if (rangeEndMer === 'pm') {
+      if (eH < 12) eH += 12;
+      if (rangeStartMer === 'am') {
+        if (sH === 12) sH = 0;
+      } else if (rangeStartMer === 'pm') {
+        if (sH < 12) sH += 12;
+      } else {
+        if (sH === 12) {
+          sH = 12;
+        } else if (rangeStartH <= rangeEndH) {
+          if (sH < 12) sH += 12;
+        }
+      }
+    } else if (rangeEndMer === 'am') {
+      if (eH === 12) eH = 0;
+      if (rangeStartMer === 'pm') {
+        if (sH < 12) sH += 12;
+      } else {
+        if (sH === 12) sH = 0;
+      }
+    } else if (isRangeEvening || isRangeNight) {
+      if (sH < 12) sH += 12;
+      if (eH < 12) eH += 12;
+    } else if (isRangeAfternoon) {
+      if (sH < 12 && sH >= 1) sH += 12;
+      if (eH < 12 && eH >= 1) eH += 12;
+    } else if (isRangeMorning) {
+      if (sH === 12) sH = 0;
+      if (eH === 12) eH = 0;
+    } else {
+      if (rangeStartMer === 'pm' && sH < 12) sH += 12;
+      if (rangeStartMer === 'am' && sH === 12) sH = 0;
+      if (!rangeStartMer && !rangeEndMer) {
+        if (sH in [1, 2, 3, 4, 5, 6]) sH += 12;
+        if (eH in [1, 2, 3, 4, 5, 6]) eH += 12;
+      }
+    }
+
+    hour = sH;
+    endHour = eH;
   } else {
     // Check Hinglish and Devanagari baje / बजे / pe with local daypart prefix
     const bajeMatch = lower.match(/(?:(subah|dopahar|shaam|sham|raat|सुबह|दोपहर|शाम|रात)\s+)?(\d{1,2})(?::(\d{2}))?\s*(?:baje|pe|बजे)/i);
@@ -281,6 +354,10 @@ export function parseScheduleMessage(
   if (!timeUnspecified && hour !== null) {
     startIso = `${startDateStr}T${pad(hour)}:${pad(minute)}:00+05:30`;
   }
+  let endIso: string | undefined = undefined;
+  if (!timeUnspecified && endHour !== null) {
+    endIso = `${startDateStr}T${pad(endHour)}:${pad(endMinute)}:00+05:30`;
+  }
 
   // 5. Subject / Title Extraction
   let title = 'event';
@@ -395,6 +472,9 @@ export function parseScheduleMessage(
   if (startIso) {
     result.start = startIso;
   }
+  if (endIso) {
+    result.end = endIso;
+  }
   if (timeUnspecified || startDateStr) {
     result.start_date = startDateStr;
   }
@@ -410,3 +490,4 @@ export function parseScheduleMessage(
 
   return result;
 }
+

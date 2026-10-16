@@ -155,6 +155,18 @@ Launch **Schedule Assistant** -> tap **Diagnostics** tab (bottom right) and veri
   - Clears all test alerts and updates scheduled count (needs owner verification)
 - [ ] **Reboot Recovery Safety for Deleted Items**:
   - Boot recovery projection hides deleted items and never restores or schedules alarms/reminders for deleted items (needs owner verification)
+- [ ] **Dynamic Notification Arrival Date (Oct 16 Fix)**:
+  - Background notification listener dynamically passes real system local time as `referenceNow` (needs owner verification)
+  - Relative dates ("Today's class timing") resolve against the current device date, never defaulting to an old date (needs owner verification)
+  - Confirmed events in the future schedule alarms normally with `AlarmScheduler` without being skipped as "in the past" (needs owner verification)
+- [ ] **Time Range & Interval Extraction (Oct 16 Fix)**:
+  - Range phrases like `"7:15 to 08:00pm"`, `"7:15 - 8:00pm"`, and `"kal Class 10 to 11 am"` extract the start time as the event start (`7:15 PM` / `10:00 AM`) and preserve end time (`8:00 PM` / `11:00 AM`) (needs owner verification)
+  - Start time no longer latches onto the end of the interval (needs owner verification)
+- [ ] **Human-Friendly Date/Time UI (Oct 16 Fix)**:
+  - Confirmed cards, Pending review cards, and Alerts rows display formatted text (e.g. `"Today • 7:15 PM – 8:00 PM"`, `"Tomorrow • 9:00 AM"`) instead of technical ISO timestamps (needs owner verification)
+- [ ] **Diagnostics Chat Allow/Block Clarity (Oct 16 Fix)**:
+  - Diagnostics chat list displays explicit status pill (`[✓ ALLOWED]` green / `[⊘ BLOCKED]` red) and a clear Switch toggle (needs owner verification)
+  - Eliminates the previous "Action vs State" color confusion (needs owner verification)
 
 ---
 

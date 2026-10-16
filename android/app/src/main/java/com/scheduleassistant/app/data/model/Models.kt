@@ -45,6 +45,7 @@ data class ScheduleEntity(
     var title: String,
     var start: String? = null,
     var start_date: String? = null,
+    var end: String? = null,
     var time_unspecified: Boolean = false,
     var ambiguous: Boolean = false,
     var status: ScheduleStatus = ScheduleStatus.PENDING,

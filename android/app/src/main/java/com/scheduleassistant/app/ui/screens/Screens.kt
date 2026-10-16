@@ -9,6 +9,8 @@ import android.provider.Settings
 import java.util.Locale
 import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.Calendar
+import java.util.TimeZone
 import androidx.core.content.ContextCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.Lifecycle
@@ -325,6 +327,95 @@ fun HomeScreen(
     }
 }
 
+fun formatFriendlyDateTime(
+    startIso: String?,
+    endIso: String? = null,
+    startDateStr: String? = null
+): String {
+    if (startIso.isNullOrBlank()) {
+        if (!startDateStr.isNullOrBlank()) {
+            return try {
+                val inDf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+                val d = inDf.parse(startDateStr)
+                if (d != null) {
+                    val calNow = Calendar.getInstance()
+                    val calEvent = Calendar.getInstance().apply { time = d }
+                    val isToday = calNow.get(Calendar.YEAR) == calEvent.get(Calendar.YEAR) &&
+                            calNow.get(Calendar.DAY_OF_YEAR) == calEvent.get(Calendar.DAY_OF_YEAR)
+                    calNow.add(Calendar.DAY_OF_YEAR, 1)
+                    val isTomorrow = calNow.get(Calendar.YEAR) == calEvent.get(Calendar.YEAR) &&
+                            calNow.get(Calendar.DAY_OF_YEAR) == calEvent.get(Calendar.DAY_OF_YEAR)
+                    val datePrefix = when {
+                        isToday -> "Today"
+                        isTomorrow -> "Tomorrow"
+                        else -> SimpleDateFormat("EEE, MMM d", Locale.US).format(d)
+                    }
+                    "$datePrefix (Time unspecified)"
+                } else {
+                    "Date: $startDateStr"
+                }
+            } catch (e: Exception) {
+                "Date: $startDateStr"
+            }
+        }
+        return "Time unspecified"
+    }
+
+    return try {
+        val cleanIso = startIso.replace("Z", "+00:00")
+        val parsedDate = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val zdt = java.time.ZonedDateTime.parse(cleanIso)
+            Date.from(zdt.toInstant())
+        } else {
+            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).parse(cleanIso)
+        }
+
+        if (parsedDate == null) return startIso
+
+        val calNow = Calendar.getInstance()
+        val calEvent = Calendar.getInstance().apply { time = parsedDate }
+
+        val isToday = calNow.get(Calendar.YEAR) == calEvent.get(Calendar.YEAR) &&
+                calNow.get(Calendar.DAY_OF_YEAR) == calEvent.get(Calendar.DAY_OF_YEAR)
+        calNow.add(Calendar.DAY_OF_YEAR, 1)
+        val isTomorrow = calNow.get(Calendar.YEAR) == calEvent.get(Calendar.YEAR) &&
+                calNow.get(Calendar.DAY_OF_YEAR) == calEvent.get(Calendar.DAY_OF_YEAR)
+        calNow.add(Calendar.DAY_OF_YEAR, -2)
+        val isYesterday = calNow.get(Calendar.YEAR) == calEvent.get(Calendar.YEAR) &&
+                calNow.get(Calendar.DAY_OF_YEAR) == calEvent.get(Calendar.DAY_OF_YEAR)
+
+        val dayLabel = when {
+            isToday -> "Today"
+            isTomorrow -> "Tomorrow"
+            isYesterday -> "Yesterday"
+            else -> SimpleDateFormat("EEE, MMM d", Locale.US).format(parsedDate)
+        }
+
+        val timeFmt = SimpleDateFormat("h:mm a", Locale.US)
+        val startTimeStr = timeFmt.format(parsedDate)
+
+        if (!endIso.isNullOrBlank()) {
+            try {
+                val cleanEnd = endIso.replace("Z", "+00:00")
+                val endParsed = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    val zdt = java.time.ZonedDateTime.parse(cleanEnd)
+                    Date.from(zdt.toInstant())
+                } else {
+                    SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).parse(cleanEnd)
+                }
+                if (endParsed != null) {
+                    val endTimeStr = timeFmt.format(endParsed)
+                    return "$dayLabel • $startTimeStr – $endTimeStr"
+                }
+            } catch (ignored: Exception) {}
+        }
+
+        "$dayLabel • $startTimeStr"
+    } catch (e: Exception) {
+        startIso
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConfirmedScheduleCard(
@@ -498,7 +589,12 @@ fun ConfirmedScheduleCard(
                     Column(modifier = Modifier.weight(1f)) {
                         Text(item.title, fontWeight = FontWeight.Bold, color = TextLight, fontSize = 16.sp)
                         Spacer(Modifier.height(4.dp))
-                        Text(item.start ?: item.start_date ?: "Time unspecified", color = Accent, fontSize = 13.sp)
+                        Text(
+                            text = formatFriendlyDateTime(item.start, item.end, item.start_date),
+                            fontWeight = FontWeight.SemiBold,
+                            color = Accent,
+                            fontSize = 14.sp
+                        )
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = { showEditDialog = true }) {
@@ -543,7 +639,8 @@ fun PendingItemCard(
 
             Spacer(Modifier.height(4.dp))
             Text(
-                text = item.start ?: "Date: ${item.start_date} (Time Unspecified)",
+                text = formatFriendlyDateTime(item.start, item.end, item.start_date),
+                fontWeight = FontWeight.SemiBold,
                 color = Accent,
                 fontSize = 14.sp
             )
@@ -989,7 +1086,7 @@ fun AlertsScreen(
                                     )
                                 }
                                 Text(rem.title, fontWeight = FontWeight.SemiBold, color = TextLight, fontSize = 16.sp)
-                                Text("Trigger: ${rem.trigger_time}", color = TextMuted, fontSize = 12.sp)
+                                Text("Trigger: ${formatFriendlyDateTime(rem.trigger_time)}", color = TextLight, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                             }
 
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -1761,21 +1858,35 @@ fun DiagnosticsScreen(
                                                 }
                                                 Text(title, fontWeight = FontWeight.SemiBold, color = TextLight, fontSize = 13.sp, maxLines = 1)
                                             }
-                                            Text("$count msgs in 24h • ${if (isAllowed || captureAllChats) "Allowlisted" else "Blocked"}", color = TextMuted, fontSize = 11.sp)
+                                            Spacer(Modifier.height(4.dp))
+                                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                Badge(containerColor = if (isAllowed) Success else Danger) {
+                                                    Text(if (isAllowed) "✓ ALLOWED" else "⊘ BLOCKED", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                                }
+                                                Text("$count msgs in 24h", color = TextMuted, fontSize = 11.sp)
+                                            }
                                         }
                                         Spacer(Modifier.width(8.dp))
-                                        Button(
-                                            onClick = {
-                                                val newStatus = !isAllowed
-                                                DiagnosticsManager.setChatAllowed(context, title, newStatus)
-                                                allowedChats = DiagnosticsManager.getAllowedChats(context)
-                                            },
-                                            colors = ButtonDefaults.buttonColors(
-                                                containerColor = if (isAllowed) Danger else Success
-                                            ),
-                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
-                                        ) {
-                                            Text(if (isAllowed) "Block" else "Allow", color = Color.White, fontSize = 11.sp)
+                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            Text(
+                                                if (isAllowed) "Allowed" else "Blocked",
+                                                color = if (isAllowed) Success else Danger,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                            Switch(
+                                                checked = isAllowed,
+                                                onCheckedChange = { checked ->
+                                                    DiagnosticsManager.setChatAllowed(context, title, checked)
+                                                    allowedChats = DiagnosticsManager.getAllowedChats(context)
+                                                },
+                                                colors = SwitchDefaults.colors(
+                                                    checkedThumbColor = Color.White,
+                                                    checkedTrackColor = Success,
+                                                    uncheckedThumbColor = Color.White,
+                                                    uncheckedTrackColor = Danger.copy(alpha = 0.5f)
+                                                )
+                                            )
                                         }
                                     }
                                 }
