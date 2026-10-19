@@ -39,12 +39,14 @@ fun parseIsoTimestamp(isoString: String): Long? {
         "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
         "yyyy-MM-dd'T'HH:mm:ss'Z'",
         "yyyy-MM-dd'T'HH:mmXXX",
-        "yyyy-MM-dd'T'HH:mm"
+        "yyyy-MM-dd'T'HH:mm:ss",
+        "yyyy-MM-dd'T'HH:mm",
+        "yyyy-MM-dd"
     )
     for (p in patterns) {
         try {
             val df = SimpleDateFormat(p, Locale.US).apply {
-                if (p.endsWith("'Z'")) timeZone = TimeZone.getTimeZone("UTC")
+                timeZone = if (p.endsWith("'Z'")) TimeZone.getTimeZone("UTC") else TimeZone.getTimeZone("Asia/Kolkata")
             }
             val date = df.parse(isoString)
             if (date != null) return date.time
@@ -652,7 +654,7 @@ class AlarmReceiver : BroadcastReceiver() {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val db = AppDatabase.getInstance(context)
-                val deviceId = "android-device"
+                val deviceId = "android-phone"
                 val hlc = HlcClock(deviceId)
                 val nextSeq = db.eventDao().getNextSeq(deviceId)
 

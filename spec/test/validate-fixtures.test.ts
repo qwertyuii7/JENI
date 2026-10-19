@@ -166,15 +166,18 @@ describe('Fixtures Validation Suite', () => {
       const refParsed = parseYMD(f.reference_now);
       const startParsed = parseYMD(f.expected.extraction.start || `${targetDate}T00:00:00`);
 
-      // 1. Relative day checks
-      if (lowerInput.includes('kal ') || lowerInput.includes('tomorrow')) {
-        expect(diffDays).toBe(1);
-      } else if (lowerInput.includes('parso ') || lowerInput.includes('day after tomorrow')) {
-        expect(diffDays).toBe(2);
-      } else if (lowerInput.includes('tarso ')) {
-        expect(diffDays).toBe(3);
-      } else if (lowerInput.includes('aaj ') || lowerInput.includes('today')) {
-        expect(diffDays).toBe(0);
+      // 1. Relative day checks (explicit date overrides relative words)
+      const hasExplicitDate = /\b\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|\b\d{1,2}\/\d{1,2}\b/i.test(lowerInput);
+      if (!hasExplicitDate) {
+        if (lowerInput.includes('kal ') || lowerInput.includes('tomorrow')) {
+          expect(diffDays).toBe(1);
+        } else if (lowerInput.includes('parso ') || lowerInput.includes('day after tomorrow')) {
+          expect(diffDays).toBe(2);
+        } else if (lowerInput.includes('tarso ')) {
+          expect(diffDays).toBe(3);
+        } else if (lowerInput.includes('aaj ') || lowerInput.includes('today')) {
+          expect(diffDays).toBe(0);
+        }
       }
 
       // 2. Weekday name checks

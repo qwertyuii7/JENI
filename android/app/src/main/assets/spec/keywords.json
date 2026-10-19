@@ -2,7 +2,7 @@
   "schedule_triggers": [
     "tomorrow", "today", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
     "meeting", "class", "classes", "lecture", "sync", "standup", "demo", "presentation", "viva",
-    "test", "quiz", "exam", "practical", "lab", "workshop", "webinar", "appointment", "deadline",
+    "test", "quiz", "exam", "practical", "lab", "workshop", "webinar", "seminar", "discussion", "meet", "appointment", "deadline",
     "review", "postponed", "cancelled", "canceled", "rescheduled", "shifted", "called off", "kickoff",
     "kal", "parso", "tarso", "aaj", "baje", "pe", "subah", "dopahar", "shaam", "sham", "raat",
     "somvar", "mangalvar", "budhvar", "guruvar", "veervar", "shukravar", "shanivar", "ravivar",

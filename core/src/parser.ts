@@ -79,56 +79,110 @@ export function parseScheduleMessage(
     type = 'cancel';
   }
 
-  // 2. Relative Day Offset
+  // 2. Date and Day Offset Parsing
+  let hasExplicitDate = false;
+  let explicitYear = refYear;
+  let explicitMonth = refMonth;
+  let explicitDay = refDay;
   let dayOffset: number | null = null;
   let hasDayMention = false;
-  const isNextWeek = /\b(next|agle)\b/i.test(lower) || lower.includes('अगले');
 
-  if (/\b(kal|tomorrow)\b/i.test(lower) || lower.includes('कल')) {
-    dayOffset = 1;
-    hasDayMention = true;
-  } else if (/\b(parso|day after tomorrow)\b/i.test(lower) || lower.includes('परसों')) {
-    dayOffset = 2;
-    hasDayMention = true;
-  } else if (/\b(tarso)\b/i.test(lower)) {
-    dayOffset = 3;
-    hasDayMention = true;
-  } else if (/\b(aaj|today)\b/i.test(lower) || lower.includes('आज')) {
-    dayOffset = 0;
-    hasDayMention = true;
-  } else {
-    const weekdayMap: Record<string, number> = {
-      'somvar': 1, 'monday': 1, 'सोमवार': 1,
-      'mangalvar': 2, 'tuesday': 2, 'मंगलवार': 2,
-      'budhvar': 3, 'wednesday': 3, 'बुधवार': 3,
-      'guruvar': 4, 'veervar': 4, 'thursday': 4, 'गुरुवार': 4,
-      'shukravar': 5, 'friday': 5, 'शुक्रवार': 5,
-      'shanivar': 6, 'saturday': 6, 'शनिवार': 6,
-      'ravivar': 0, 'sunday': 0, 'रविवार': 0
-    };
+  const monthNamesMap: Record<string, number> = {
+    jan: 1, january: 1,
+    feb: 2, february: 2,
+    mar: 3, march: 3,
+    apr: 4, april: 4,
+    may: 5,
+    jun: 6, june: 6,
+    jul: 7, july: 7,
+    aug: 8, august: 8,
+    sep: 9, sept: 9, september: 9,
+    oct: 10, october: 10,
+    nov: 11, november: 11,
+    dec: 12, december: 12
+  };
 
-    for (const [dayName, dayIndex] of Object.entries(weekdayMap)) {
-      if (lower.includes(dayName)) {
-        hasDayMention = true;
-        if (isNextWeek) {
-          if (dayIndex === refWeekday) {
-            dayOffset = 7;
-          } else {
-            dayOffset = ((dayIndex - refWeekday + 7) % 7) + 7;
-          }
-        } else if (dayIndex === refWeekday) {
-          dayOffset = null; // Resolved after time check
-        } else {
-          dayOffset = (dayIndex - refWeekday + 7) % 7;
-        }
-        break;
+  const explicitDate1 = lower.match(/\b\(?\s*(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b\s*\)?/i);
+  const explicitDate2 = lower.match(/\b\(?\s*(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:st|nd|rd|th)?\b\s*\)?/i);
+  const explicitDateNumeric = lower.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/);
+
+  if (explicitDate1) {
+    hasExplicitDate = true;
+    explicitDay = Number(explicitDate1[1]);
+    explicitMonth = monthNamesMap[explicitDate1[2].toLowerCase()];
+    hasDayMention = true;
+  } else if (explicitDate2) {
+    hasExplicitDate = true;
+    explicitMonth = monthNamesMap[explicitDate2[1].toLowerCase()];
+    explicitDay = Number(explicitDate2[2]);
+    hasDayMention = true;
+  } else if (explicitDateNumeric) {
+    const d = Number(explicitDateNumeric[1]);
+    const m = Number(explicitDateNumeric[2]);
+    if (d >= 1 && d <= 31 && m >= 1 && m <= 12) {
+      hasExplicitDate = true;
+      explicitDay = d;
+      explicitMonth = m;
+      if (explicitDateNumeric[3]) {
+        const y = Number(explicitDateNumeric[3]);
+        explicitYear = y < 100 ? 2000 + y : y;
       }
+      hasDayMention = true;
     }
   }
 
-  // Edge case: Late night 23:50 with early morning "raat 5"
-  if (dayOffset === null && refHour >= 22 && /\braat\s+[1-5]\b/i.test(lower)) {
-    dayOffset = 1;
+  // 3. Relative Day Offset (Explicit date overrides relative words)
+  const isNextWeek = /\b(next|agle)\b/i.test(lower) || lower.includes('अगले');
+
+  if (!hasExplicitDate) {
+    if (/\b(kal|tomorrow)\b/i.test(lower) || lower.includes('कल')) {
+      dayOffset = 1;
+      hasDayMention = true;
+    } else if (/\b(parso|day after tomorrow)\b/i.test(lower) || lower.includes('परसों')) {
+      dayOffset = 2;
+      hasDayMention = true;
+    } else if (/\b(tarso)\b/i.test(lower)) {
+      dayOffset = 3;
+      hasDayMention = true;
+    } else if (/\b(aaj|today)\b/i.test(lower) || lower.includes('आज')) {
+      dayOffset = 0;
+      hasDayMention = true;
+    } else {
+      const weekdayMap: Record<string, number> = {
+        'somvar': 1, 'monday': 1, 'सोमवार': 1,
+        'mangalvar': 2, 'tuesday': 2, 'मंगलवार': 2,
+        'budhvar': 3, 'wednesday': 3, 'बुधवार': 3,
+        'guruvar': 4, 'veervar': 4, 'thursday': 4, 'गुरुवार': 4,
+        'shukravar': 5, 'friday': 5, 'शुक्रवार': 5,
+        'shanivar': 6, 'saturday': 6, 'शनिवार': 6,
+        'ravivar': 0, 'sunday': 0, 'रविवार': 0
+      };
+
+      for (const [dayName, dayIndex] of Object.entries(weekdayMap)) {
+        if (lower.includes(dayName)) {
+          hasDayMention = true;
+          if (isNextWeek) {
+            if (dayIndex === refWeekday) {
+              dayOffset = 7;
+            } else {
+              dayOffset = ((dayIndex - refWeekday + 7) % 7) + 7;
+            }
+          } else if (dayIndex === refWeekday) {
+            dayOffset = null; // Resolved after time check
+          } else {
+            dayOffset = (dayIndex - refWeekday + 7) % 7;
+          }
+          break;
+        }
+      }
+    }
+
+    // Edge case: Late night 23:50 with early morning "raat 5"
+    if (dayOffset === null && refHour >= 22 && /\braat\s+[1-5]\b/i.test(lower)) {
+      dayOffset = 1;
+      hasDayMention = true;
+    }
+  } else {
     hasDayMention = true;
   }
 
@@ -151,9 +205,9 @@ export function parseScheduleMessage(
 
   // Multi-time reschedule pattern: "kal ki 3 baje wali class 5 baje shift ho gayi"
   const multiTimeMatch = lower.match(/(\d{1,2})(?::(\d{2}))?\s*(?:baje|बजे)\s*wali.*?(\d{1,2})(?::(\d{2}))?\s*(?:baje|बजे)\s*(?:shift|postpone)/i);
-  // Time range pattern: "7:15 to 08:00pm", "7:15 - 8:00pm", "7 to 8pm", "10:00 to 11:30am", "11:00am - 1:00pm", "shaam 6 to 7 baje"
+  // Time range pattern: "7:15 to 08:00pm", "7:15 - 8:00pm", "7 to 8pm", "10:00 to 11:30am", "11:00am - 1:00pm", "shaam 6 to 7 baje", Devanagari ranges
   const timeRangeMatch = lower.match(
-    /(?:(subah|dopahar|shaam|sham|raat|सुबह|दोपहर|शाम|रात)\s+)?\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:to|until|till|-|–|—|se|से)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm|baje|बजे)?\b/i
+    /(?:(subah|dopahar|shaam|sham|raat|सुबह|दोपहर|शाम|रात)\s+)?(?:^|\b|\s)(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:to|until|till|-|–|—|se|से)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm|baje|बजे)?(?:\b|\s|$)/i
   );
 
   const rangeStartH = timeRangeMatch ? Number(timeRangeMatch[2]) : null;
@@ -221,9 +275,9 @@ export function parseScheduleMessage(
     } else {
       if (rangeStartMer === 'pm' && sH < 12) sH += 12;
       if (rangeStartMer === 'am' && sH === 12) sH = 0;
-      if (!rangeStartMer && !rangeEndMer) {
-        if (sH in [1, 2, 3, 4, 5, 6]) sH += 12;
-        if (eH in [1, 2, 3, 4, 5, 6]) eH += 12;
+      if (!rangeEndMer || rangeEndMer === 'baje' || rangeEndMer === 'बजे') {
+        if (sH >= 1 && sH <= 6) sH += 12;
+        if (eH >= 1 && eH <= 6) eH += 12;
       }
     }
 
@@ -328,7 +382,7 @@ export function parseScheduleMessage(
   }
 
   // Disambiguate same-day past-time with 12h flip
-  if (dayOffset === 0 && hour !== null && !isDinner) {
+  if (!hasExplicitDate && dayOffset === 0 && hour !== null && !isDinner) {
     const isPast = (hour < refHour) || (hour === refHour && minute <= refMinute);
     if (isPast) {
       const flipHour = hour < 12 ? hour + 12 : hour - 12;
@@ -344,11 +398,28 @@ export function parseScheduleMessage(
   }
 
   // 4. Calendar Date Calculation
-  const targetDateUtc = new Date(refDateUtc.getTime() + (dayOffset || 0) * 24 * 60 * 60 * 1000);
-  const targetYear = targetDateUtc.getUTCFullYear();
-  const targetMonth = targetDateUtc.getUTCMonth() + 1;
-  const targetDay = targetDateUtc.getUTCDate();
-  const startDateStr = `${targetYear}-${pad(targetMonth)}-${pad(targetDay)}`;
+  let targetYear: number;
+  let targetMonth: number;
+  let targetDay: number;
+  let startDateStr: string;
+
+  if (hasExplicitDate) {
+    targetYear = explicitYear;
+    targetMonth = explicitMonth;
+    targetDay = explicitDay;
+    startDateStr = `${targetYear}-${pad(targetMonth)}-${pad(targetDay)}`;
+    if (hour === null && endHour === null) {
+      timeUnspecified = true;
+      isAmbiguous = true;
+      if (confidence > 0.65) confidence = 0.65;
+    }
+  } else {
+    const targetDateUtc = new Date(refDateUtc.getTime() + (dayOffset || 0) * 24 * 60 * 60 * 1000);
+    targetYear = targetDateUtc.getUTCFullYear();
+    targetMonth = targetDateUtc.getUTCMonth() + 1;
+    targetDay = targetDateUtc.getUTCDate();
+    startDateStr = `${targetYear}-${pad(targetMonth)}-${pad(targetDay)}`;
+  }
 
   let startIso: string | undefined = undefined;
   if (!timeUnspecified && hour !== null) {

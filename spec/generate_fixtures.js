@@ -1130,6 +1130,267 @@ addFixture({
   }
 });
 
+// -------------------------------------------------------------
+// Time Range Fixtures (Requirement 6)
+// -------------------------------------------------------------
+addFixture({
+  input: "kal 7:15 to 8:00pm class hai",
+  sourceQuote: "kal 7:15 to 8:00pm class",
+  category: "schedule_new",
+  language: "hinglish",
+  isSchedule: true,
+  extraction: {
+    type: "new",
+    title: "class",
+    start: makeIST(2026, 10, 13, 19, 15),
+    confidence: 0.9
+  }
+});
+addFixture({
+  input: "kal 7:15 - 8:00pm meeting",
+  sourceQuote: "kal 7:15 - 8:00pm meeting",
+  category: "schedule_new",
+  language: "hinglish",
+  isSchedule: true,
+  extraction: {
+    type: "new",
+    title: "meeting",
+    start: makeIST(2026, 10, 13, 19, 15),
+    confidence: 0.9
+  }
+});
+addFixture({
+  input: "kal 10 to 11:30 am standup",
+  sourceQuote: "kal 10 to 11:30 am standup",
+  category: "schedule_new",
+  language: "hinglish",
+  isSchedule: true,
+  extraction: {
+    type: "new",
+    title: "standup",
+    start: makeIST(2026, 10, 13, 10, 0),
+    confidence: 0.9
+  }
+});
+addFixture({
+  input: "kal 11 to 1pm workshop",
+  sourceQuote: "kal 11 to 1pm workshop",
+  category: "schedule_new",
+  language: "hinglish",
+  isSchedule: true,
+  extraction: {
+    type: "new",
+    title: "workshop",
+    start: makeIST(2026, 10, 13, 11, 0),
+    confidence: 0.9
+  }
+});
+addFixture({
+  input: "kal 12 to 1pm lunch meeting",
+  sourceQuote: "kal 12 to 1pm lunch meeting",
+  category: "schedule_new",
+  language: "hinglish",
+  isSchedule: true,
+  extraction: {
+    type: "new",
+    title: "lunch meeting",
+    start: makeIST(2026, 10, 13, 12, 0),
+    confidence: 0.9
+  }
+});
+addFixture({
+  input: "kal 9:30-10:30pm project sync",
+  sourceQuote: "kal 9:30-10:30pm project sync",
+  category: "schedule_new",
+  language: "hinglish",
+  isSchedule: true,
+  extraction: {
+    type: "new",
+    title: "project sync",
+    start: makeIST(2026, 10, 13, 21, 30),
+    confidence: 0.9
+  }
+});
+addFixture({
+  input: "kal 4 se 5 baje lab test hai",
+  sourceQuote: "kal 4 se 5 baje lab test",
+  category: "schedule_new",
+  language: "hinglish",
+  isSchedule: true,
+  extraction: {
+    type: "new",
+    title: "lab test",
+    start: makeIST(2026, 10, 13, 16, 0),
+    confidence: 0.9
+  }
+});
+addFixture({
+  input: "kal shaam 6 to 7 baje webinar",
+  sourceQuote: "kal shaam 6 to 7 baje webinar",
+  category: "schedule_new",
+  language: "hinglish",
+  isSchedule: true,
+  extraction: {
+    type: "new",
+    title: "webinar",
+    start: makeIST(2026, 10, 13, 18, 0),
+    confidence: 0.9
+  }
+});
+addFixture({
+  input: "कल ४ से ५ बजे क्लास है",
+  sourceQuote: "कल 4 से 5 बजे क्लास",
+  category: "schedule_new",
+  language: "hindi",
+  isSchedule: true,
+  extraction: {
+    type: "new",
+    title: "क्लास",
+    start: makeIST(2026, 10, 13, 16, 0),
+    confidence: 0.9
+  }
+});
+addFixture({
+  input: "कल शाम ६ से ७ बजे सेमिनार",
+  sourceQuote: "कल शाम 6 से 7 बजे सेमिनार",
+  category: "schedule_new",
+  language: "hindi",
+  isSchedule: true,
+  extraction: {
+    type: "new",
+    title: "सेमिनार",
+    start: makeIST(2026, 10, 13, 18, 0),
+    confidence: 0.9
+  }
+});
+
+// -------------------------------------------------------------
+// Explicit Date Fixtures (Requirement 5)
+// -------------------------------------------------------------
+addFixture({
+  input: "15 oct 5 baje DBMS class hai",
+  sourceQuote: "15 oct 5 baje DBMS class",
+  category: "schedule_new",
+  language: "hinglish",
+  isSchedule: true,
+  extraction: {
+    type: "new",
+    title: "DBMS class",
+    start: makeIST(2026, 10, 15, 17, 0),
+    confidence: 0.9
+  }
+});
+addFixture({
+  input: "15th October 4pm meeting",
+  sourceQuote: "15th October 4pm meeting",
+  category: "schedule_new",
+  language: "english",
+  isSchedule: true,
+  extraction: {
+    type: "new",
+    title: "meeting",
+    start: makeIST(2026, 10, 15, 16, 0),
+    confidence: 0.9
+  }
+});
+addFixture({
+  input: "15/10 11am viva",
+  sourceQuote: "15/10 11am viva",
+  category: "schedule_new",
+  language: "english",
+  isSchedule: true,
+  extraction: {
+    type: "new",
+    title: "viva",
+    start: makeIST(2026, 10, 15, 11, 0),
+    confidence: 0.9
+  }
+});
+addFixture({
+  input: "(15 oct) 10:00 AM seminar",
+  sourceQuote: "(15 oct) 10:00 AM seminar",
+  category: "schedule_new",
+  language: "english",
+  isSchedule: true,
+  extraction: {
+    type: "new",
+    title: "seminar",
+    start: makeIST(2026, 10, 15, 10, 0),
+    confidence: 0.9
+  }
+});
+addFixture({
+  input: "tomorrow (15 oct) 3pm presentation",
+  sourceQuote: "tomorrow (15 oct) 3pm presentation",
+  category: "schedule_new",
+  language: "english",
+  isSchedule: true,
+  extraction: {
+    type: "new",
+    title: "presentation",
+    start: makeIST(2026, 10, 15, 15, 0),
+    confidence: 0.9
+  }
+});
+
+// -------------------------------------------------------------
+// Real Data Negatives (Requirement 7)
+// -------------------------------------------------------------
+addFixture({
+  input: "Flash sale ends tonight! 50% off till 12 midnight, use code FLASH50",
+  category: "promo_negative",
+  language: "english",
+  isSchedule: false
+});
+addFixture({
+  input: "Mega Sale: Flat 40% off on all items, deadline today 11:59 pm!",
+  category: "promo_negative",
+  language: "english",
+  isSchedule: false
+});
+addFixture({
+  input: "rat me try krna 1-2 baje k bich",
+  category: "banter_negative",
+  language: "hinglish",
+  isSchedule: false
+});
+addFixture({
+  input: "bhai shaam me 4-5 baje ke aas pass dekhna",
+  category: "banter_negative",
+  language: "hinglish",
+  isSchedule: false
+});
+addFixture({
+  input: "I will send the tasks tomorrow afternoon",
+  category: "personal_plan_negative",
+  language: "english",
+  isSchedule: false
+});
+addFixture({
+  input: "I will send the tasks to everyone tomorrow afternoon according to their respective roles.",
+  category: "personal_plan_negative",
+  language: "english",
+  isSchedule: false
+});
+addFixture({
+  input: "mai kal tasks bhej dunga",
+  category: "personal_plan_negative",
+  language: "hinglish",
+  isSchedule: false
+});
+addFixture({
+  input: "Roll numbers for presentation:\n21BCS001\n21BCS002\n21BCS003\n21BCS004",
+  category: "roll_number_list_negative",
+  language: "english",
+  isSchedule: false
+});
+addFixture({
+  input: "Roll numbers: 101, 102, 103, 104, 105, 106, 107",
+  category: "roll_number_list_negative",
+  language: "english",
+  isSchedule: false
+});
+
 const outDir = path.join(__dirname, 'fixtures');
 if (!fs.existsSync(outDir)) {
   fs.mkdirSync(outDir, { recursive: true });

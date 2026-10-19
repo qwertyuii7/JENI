@@ -248,6 +248,7 @@ class MainActivity : ComponentActivity() {
                 when (currentTab) {
                     AppTab.HOME -> HomeScreen(
                         schedules = schedules,
+                        reminders = reminders,
                         isListenerConnected = isListenerConnected,
                         onNavigateToPending = { currentTab = AppTab.PENDING },
                         onNavigateToDebug = { currentTab = AppTab.DEBUG },
@@ -262,10 +263,12 @@ class MainActivity : ComponentActivity() {
                         },
                         onDismiss = { id ->
                             handleDismissSchedule(id)
-                        }
+                        },
+                        onEdit = { id, title, start, alarm -> handleEditSchedule(id, title, start, alarm) }
                     )
                     AppTab.ALERTS -> AlertsScreen(
                         reminders = reminders,
+                        confirmedSchedules = schedules.filter { it.status == ScheduleStatus.CONFIRMED },
                         confirmedCount = schedules.count { it.status == ScheduleStatus.CONFIRMED },
                         onDelete = onDeleteWithUndo,
                         onRestore = { id -> handleRestoreSchedule(id) },
@@ -302,6 +305,28 @@ class MainActivity : ComponentActivity() {
         projectedState: com.scheduleassistant.app.data.projection.ProjectedState
     ) {
         lifecycleScope.launch(Dispatchers.IO) {
+            var target = projectedState.schedules[id]
+            if (target == null) {
+                val allEvents = db.eventDao().getAllEvents().map { it.toSyncEvent() }
+                val projectedFromDb = com.scheduleassistant.app.data.projection.ProjectionEngine.projectState(allEvents)
+                target = projectedFromDb.schedules[id]
+            }
+
+            // Requirement 4: Confirm on a past event: block with a clear message and offer Edit time or Dismiss
+            val effectiveStart = customTime ?: target?.start
+            val startMs = effectiveStart?.let { com.scheduleassistant.app.service.parseIsoTimestamp(it) }
+                ?: target?.start_date?.let { com.scheduleassistant.app.service.parseIsoTimestamp("${it}T23:59:59+05:30") }
+            if (startMs != null && startMs <= System.currentTimeMillis()) {
+                alarmScheduler.recordAudit(
+                    entityId = id,
+                    triggerTime = effectiveStart ?: target?.start_date ?: "",
+                    api = "MainActivity.confirm",
+                    result = "BLOCKED",
+                    errorMessage = "Cannot confirm event in the past"
+                )
+                return@launch
+            }
+
             val nextSeq = db.eventDao().getNextSeq(deviceId)
             val hlcNow = hlc.now()
             val nowIso = getIsoNow()
@@ -323,14 +348,6 @@ class MainActivity : ComponentActivity() {
                 payload = payloadJson.toString()
             )
             db.eventDao().insertEvent(confirmEntity)
-
-            // Trigger alarm schedule for confirmed event
-            var target = projectedState.schedules[id]
-            if (target == null) {
-                val allEvents = db.eventDao().getAllEvents().map { it.toSyncEvent() }
-                val projectedFromDb = com.scheduleassistant.app.data.projection.ProjectionEngine.projectState(allEvents)
-                target = projectedFromDb.schedules[id]
-            }
 
             if (target != null) {
                 val updatedTarget = if (customTime != null) {
@@ -536,15 +553,33 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun normalizeToAppTimezone(startStr: String): String {
+        val epoch = com.scheduleassistant.app.service.parseIsoTimestamp(startStr) ?: return startStr
+        return SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).apply {
+            timeZone = TimeZone.getTimeZone("Asia/Kolkata")
+        }.format(Date(epoch))
+    }
+
     fun handleEditSchedule(id: String, newTitle: String, newStart: String?, enableAlarm: Boolean) {
         lifecycleScope.launch(Dispatchers.IO) {
+            val allEventsBefore = db.eventDao().getAllEvents().map { it.toSyncEvent() }
+            val stateBefore = com.scheduleassistant.app.data.projection.ProjectionEngine.projectState(allEventsBefore)
+            val existing = stateBefore.schedules[id]
+
+            // If time is not changed, keep trigger identical
+            val normalizedStart = if (newStart == null || (existing != null && newStart == existing.start)) {
+                existing?.start ?: newStart
+            } else {
+                normalizeToAppTimezone(newStart)
+            }
+
             val nextSeq = db.eventDao().getNextSeq(deviceId)
             val hlcNow = hlc.now()
             val nowIso = getIsoNow()
 
             val payloadJson = JSONObject().apply {
                 put("title", newTitle)
-                if (newStart != null) put("start", newStart)
+                if (normalizedStart != null) put("start", normalizedStart)
                 put("has_alarm", enableAlarm)
             }
             val editEntity = SyncEventEntity(

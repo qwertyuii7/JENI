@@ -18,6 +18,18 @@ const SCORE_REGEX = /\b\d{2,3}\s*for\s*\d\s*(wickets)?\b/i;
 // Non-schedule time expressions
 const NON_SCHEDULE_TIME = /\b\d+\s*baje\s*tak\s*(sone|utha|soya|sona)\b/i;
 
+// Promo text with deadline words / discount noise
+const PROMO_REGEX = /\b(flat\s+\d+%?\s+(?:off|discount)|flash\s+sale|discount\b.*\b(?:code|coupon)|use\s+code\b|cashback\b|coupon\s+code|offer\s+expires|limited\s+time\s+(?:deal|offer)|order\s+now\s+to\s+get|buy\s+\d+\s+get\s+\d+|free\s+delivery\s+on\s+orders)\b/i;
+
+// Chat banter with time window (e.g. "rat me try krna 1-2 baje k bich")
+const BANTER_WINDOW_REGEX = /\b(?:rat|raat|shaam|sham|dopahar|subah)?\s*(?:m|me|mein)?\s*(?:try\s+k(?:a)?rn[a-z]*|dekh\s+l(?:en[a-z]*|in[a-z]*|n[a-z]*)|check\s+k(?:a)?rn[a-z]*)\s+.*(?:\d{1,2}(?::\d{2})?\s*(?:se|-|to)?\s*\d{1,2}(?::\d{2})?\s*(?:baje)?)\s*(?:k|ke)?\s*(?:bich|beech|aas\s*pass)\b|\b\d{1,2}(?::\d{2})?\s*(?:se|-|to)\s*\d{1,2}(?::\d{2})?\s*(?:baje)?\s*(?:k|ke)\s*(?:bich|beech|aas\s*pass)\b/i;
+
+// Someone else's plan / personal promise to send/submit/share tasks
+const PERSONAL_PLAN_REGEX = /\b(?:I|we)\s+will\s+(?:send|share|forward|submit|upload|update|email|mail|give|post|provide)\s+.*(?:tomorrow|kal|today|aaj|tonight|afternoon|morning|evening)\b|\b(?:mai|main|hum)\s+.*(?:bhej\s+dunga|bhej\s+denge|share\s+kar\s+dunga|submit\s+kar\s+dunga|update\s+kar\s+dunga)\b/i;
+
+// Roll-number lists (student rosters/registration lists)
+const ROLL_NUMBER_LIST_REGEX = /\b(?:roll\s*(?:no|number|numbers|num|nos)?\.?|enrol(?:l)?ment\s*nos?\.?)\s*(?:[:\-]?\s*(?:\n|\r|\d{1,}[A-Za-z0-9,\s\-]{5,})|\d+\s*(?:to|-)\s*\d+)/i;
+
 // Past tense patterns (kal class thi, कल हमारी क्लास थी, yesterday we had)
 const PAST_TENSE_REGEX = /\b(kal|parso|aaj subah)\s+.*(thi|tha|the|chuka hai|ho gaya tha)\b|कल\s+.*(?:थी|था|थे|हो चुकी थी|कैंसिल था)|(?:रद्द|स्थगित|शिफ्ट|कैंसिल)\s+.*(?:थी|था|हो चुकी थी|हो गई थी)|\byesterday\s+we\s+had\b|\blast\s+(friday|monday|tuesday|wednesday|thursday|saturday|sunday)\s+we\b/i;
 
@@ -37,7 +49,7 @@ const STALE_FORWARD_REGEX = /\b(fwd:\s*202[0-4]|circular\s*202[0-4]|purana\s*202
 const CASUAL_CHATTER_REGEX = /^(gm bro|good morning all|kya chal raha hai\??|ok done|lol that was so funny|hahaha true|send me the notes please|where are you reaching\??|chalo chai peete hain|happy birthday bhai!?|thank you so much|yes perfect|check this reel lol|bhai kal milte hain aram se|bye good night)$/i;
 
 // Schedule trigger regex with strict word boundaries
-const SCHEDULE_WORD_REGEX = /\b(tomorrow|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday|meeting|class|classes|lecture|sync|standup|demo|presentation|viva|test|quiz|exam|practical|lab|workshop|webinar|appointment|deadline|review|postponed|cancelled|canceled|rescheduled|shifted|called off|kickoff|kal|parso|tarso|aaj|baje|pe|subah|dopahar|shaam|sham|raat|somvar|mangalvar|budhvar|guruvar|veervar|shukravar|shanivar|ravivar|agle)\b|कल|परसों|आज|बजे|सुबह|दोपहर|शाम|रात|सोमवार|मंगलवार|बुधवार|गुरुवार|शुक्रवार|शनिवार|रविवार|अगले|क्लास|मीटिंग|टेस्ट|परीक्षा|कार्यशाला|सेमिनार|रद्द|कैंसिल|स्थगित|शिफ्ट|लेक्चर/i;
+const SCHEDULE_WORD_REGEX = /\b(tomorrow|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday|meeting|class|classes|lecture|sync|standup|demo|presentation|viva|test|quiz|exam|practical|lab|workshop|webinar|seminar|discussion|meet|appointment|deadline|review|postponed|cancelled|canceled|rescheduled|shifted|called off|kickoff|kal|parso|tarso|aaj|baje|pe|subah|dopahar|shaam|sham|raat|somvar|mangalvar|budhvar|guruvar|veervar|shukravar|shanivar|ravivar|agle|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|january|february|march|april|june|july|august|september|october|november|december)\b|कल|परसों|आज|बजे|सुबह|दोपहर|शाम|रात|सोमवार|मंगलवार|बुधवार|गुरुवार|शुक्रवार|शनिवार|रविवार|अगले|क्लास|मीटिंग|टेस्ट|परीक्षा|कार्यशाला|सेमिनार|रद्द|कैंसिल|स्थगित|शिफ्ट|लेक्चर/i;
 
 export function prefilterMessage(rawText: string): PrefilterResult {
   if (!rawText || typeof rawText !== 'string') {
@@ -91,6 +103,18 @@ export function prefilterMessage(rawText: string): PrefilterResult {
   }
   if (NON_SCHEDULE_TIME.test(sanitized)) {
     return { shouldParse: false, sanitizedText: sanitized, reason: 'non_schedule_time' };
+  }
+  if (PROMO_REGEX.test(sanitized)) {
+    return { shouldParse: false, sanitizedText: sanitized, reason: 'promo_noise' };
+  }
+  if (BANTER_WINDOW_REGEX.test(sanitized)) {
+    return { shouldParse: false, sanitizedText: sanitized, reason: 'chat_banter' };
+  }
+  if (PERSONAL_PLAN_REGEX.test(sanitized)) {
+    return { shouldParse: false, sanitizedText: sanitized, reason: 'someone_elses_plan' };
+  }
+  if (ROLL_NUMBER_LIST_REGEX.test(sanitized)) {
+    return { shouldParse: false, sanitizedText: sanitized, reason: 'roll_number_list' };
   }
   if (PAST_TENSE_REGEX.test(sanitized)) {
     return { shouldParse: false, sanitizedText: sanitized, reason: 'past_tense' };

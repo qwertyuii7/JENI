@@ -49,6 +49,7 @@ import com.scheduleassistant.app.ui.theme.*
 @Composable
 fun HomeScreen(
     schedules: List<ScheduleEntity>,
+    reminders: List<com.scheduleassistant.app.data.model.ReminderEntity> = emptyList(),
     isListenerConnected: Boolean = true,
     onNavigateToPending: () -> Unit,
     onNavigateToDebug: () -> Unit,
@@ -319,6 +320,7 @@ fun HomeScreen(
             items(todayConfirmed, key = { it.id }) { item ->
                 ConfirmedScheduleCard(
                     item = item,
+                    reminders = reminders,
                     onDelete = onDelete,
                     onEdit = onEdit
                 )
@@ -416,10 +418,21 @@ fun formatFriendlyDateTime(
     }
 }
 
+fun getNoAlertScheduledReason(item: ScheduleEntity, reminders: List<com.scheduleassistant.app.data.model.ReminderEntity>): String? {
+    val hasActiveReminder = reminders.any { it.schedule_id == item.id && it.status == com.scheduleassistant.app.data.model.ReminderStatus.SCHEDULED }
+    if (hasActiveReminder) return null
+    val start = item.start
+    if (item.time_unspecified || start.isNullOrBlank()) return "time unspecified"
+    val startMs = com.scheduleassistant.app.service.parseIsoTimestamp(start) ?: return "invalid time format"
+    if (startMs <= System.currentTimeMillis()) return "event in past"
+    return "no active alert"
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConfirmedScheduleCard(
     item: ScheduleEntity,
+    reminders: List<com.scheduleassistant.app.data.model.ReminderEntity> = emptyList(),
     onDelete: (String) -> Unit,
     onEdit: (String, String, String?, Boolean) -> Unit
 ) {
@@ -595,6 +608,26 @@ fun ConfirmedScheduleCard(
                             color = Accent,
                             fontSize = 14.sp
                         )
+                        val noAlertReason = getNoAlertScheduledReason(item, reminders)
+                        if (noAlertReason != null) {
+                            Spacer(Modifier.height(4.dp))
+                            Surface(
+                                color = Color(0x33EF4444),
+                                shape = RoundedCornerShape(4.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "⚠️ no alert scheduled: $noAlertReason",
+                                        color = Danger,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = { showEditDialog = true }) {
@@ -616,9 +649,122 @@ fun ConfirmedScheduleCard(
 fun PendingItemCard(
     item: ScheduleEntity,
     onConfirm: (String, String?, Boolean) -> Unit,
-    onDismiss: (String) -> Unit
+    onDismiss: (String) -> Unit,
+    onEdit: ((String, String, String?, Boolean) -> Unit)? = null
 ) {
     var enableAlarm by remember { mutableStateOf(false) }
+    var showPastEventDialog by remember { mutableStateOf(false) }
+    var pastEventTargetTime by remember { mutableStateOf<String?>(null) }
+    var showEditDialog by remember { mutableStateOf(false) }
+    var editTitle by remember(item.title) { mutableStateOf(item.title) }
+    var editTime by remember(item.start) { mutableStateOf(item.start ?: item.start_date ?: "") }
+
+    fun tryConfirm(targetTime: String?) {
+        val effectiveTime = targetTime ?: item.start
+        val startMs = effectiveTime?.let { com.scheduleassistant.app.service.parseIsoTimestamp(it) }
+            ?: item.start_date?.let { com.scheduleassistant.app.service.parseIsoTimestamp("${it}T23:59:59+05:30") }
+        if (startMs != null && startMs <= System.currentTimeMillis()) {
+            pastEventTargetTime = effectiveTime
+            showPastEventDialog = true
+        } else {
+            onConfirm(item.id, targetTime, enableAlarm)
+        }
+    }
+
+    if (showPastEventDialog) {
+        AlertDialog(
+            onDismissRequest = { showPastEventDialog = false },
+            title = { Text("Cannot Confirm Past Event", color = TextLight, fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "The event \"${item.title}\" is set to a past time (${formatFriendlyDateTime(pastEventTargetTime ?: item.start, null, item.start_date)}).\n\nAlerts cannot be scheduled for events in the past. Would you like to edit the time or dismiss this event?",
+                    color = TextMuted,
+                    fontSize = 14.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showPastEventDialog = false
+                        showEditDialog = true
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Accent)
+                ) {
+                    Text("Edit Time", color = Color.White)
+                }
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { showPastEventDialog = false }) {
+                        Text("Cancel", color = TextMuted)
+                    }
+                    TextButton(
+                        onClick = {
+                            showPastEventDialog = false
+                            onDismiss(item.id)
+                        }
+                    ) {
+                        Text("Dismiss", color = Danger)
+                    }
+                }
+            },
+            containerColor = CardBg
+        )
+    }
+
+    if (showEditDialog) {
+        AlertDialog(
+            onDismissRequest = { showEditDialog = false },
+            title = { Text("Edit Event Time", color = TextLight, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedTextField(
+                        value = editTitle,
+                        onValueChange = { editTitle = it },
+                        label = { Text("Title") },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = TextLight,
+                            unfocusedTextColor = TextLight,
+                            focusedBorderColor = Primary,
+                            unfocusedBorderColor = CardBorder
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = editTime,
+                        onValueChange = { editTime = it },
+                        label = { Text("Start Time (ISO or YYYY-MM-DDTHH:MM)") },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = TextLight,
+                            unfocusedTextColor = TextLight,
+                            focusedBorderColor = Primary,
+                            unfocusedBorderColor = CardBorder
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showEditDialog = false
+                        onEdit?.invoke(item.id, editTitle, editTime.ifBlank { null }, enableAlarm)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Primary)
+                ) {
+                    Text("Save & Update", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEditDialog = false }) {
+                    Text("Cancel", color = TextMuted)
+                }
+            },
+            containerColor = CardBg
+        )
+    }
 
     Card(
         colors = CardDefaults.cardColors(containerColor = CardBg),
@@ -706,7 +852,7 @@ fun PendingItemCard(
                 Spacer(Modifier.height(4.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
-                        onClick = { onConfirm(item.id, item.start, enableAlarm) },
+                        onClick = { tryConfirm(item.start) },
                         colors = ButtonDefaults.buttonColors(containerColor = Warning)
                     ) {
                         Text("Confirm Reading A", color = Color.Black, fontSize = 12.sp)
@@ -719,7 +865,7 @@ fun PendingItemCard(
                             val m = timeStr.split(":")[1].toInt()
                             val altH = if (h < 12) h + 12 else h - 12
                             val altIso = String.format(Locale.US, "%sT%02d:%02d:00+05:30", dateStr, altH, m)
-                            onConfirm(item.id, altIso, enableAlarm)
+                            tryConfirm(altIso)
                         }
                     ) {
                         Text("Confirm Reading B", color = TextLight, fontSize = 12.sp)
@@ -731,11 +877,17 @@ fun PendingItemCard(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (!item.ambiguous && item.start != null) {
                     Button(
-                        onClick = { onConfirm(item.id, null, enableAlarm) },
+                        onClick = { tryConfirm(null) },
                         colors = ButtonDefaults.buttonColors(containerColor = Success)
                     ) {
                         Text("Confirm", color = Color.White)
                     }
+                }
+                Button(
+                    onClick = { showEditDialog = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = Accent)
+                ) {
+                    Text("Edit", color = Color.White)
                 }
                 Button(
                     onClick = { onDismiss(item.id) },
@@ -752,9 +904,13 @@ fun PendingItemCard(
 fun PendingScreen(
     schedules: List<ScheduleEntity>,
     onConfirm: (String, String?, Boolean) -> Unit,
-    onDismiss: (String) -> Unit
+    onDismiss: (String) -> Unit,
+    onEdit: (String, String, String?, Boolean) -> Unit = { _, _, _, _ -> }
 ) {
     val pendingList = schedules.filter { it.status == ScheduleStatus.PENDING }
+    // Requirement 7: Precision & "Maybe" List: Events with time_unspecified or ambiguous must NOT create a normal Pending card
+    val normalPending = pendingList.filter { !it.time_unspecified && !it.ambiguous }
+    val maybeList = pendingList.filter { it.time_unspecified || it.ambiguous }
 
     LazyColumn(
         modifier = Modifier
@@ -777,18 +933,60 @@ fun PendingScreen(
             )
         }
 
-        if (pendingList.isEmpty()) {
+        if (normalPending.isNotEmpty()) {
+            item {
+                Text(
+                    text = "Pending Confirmations (${normalPending.size})",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Accent
+                )
+            }
+            items(normalPending, key = { it.id }) { item ->
+                PendingItemCard(
+                    item = item,
+                    onConfirm = onConfirm,
+                    onDismiss = onDismiss,
+                    onEdit = onEdit
+                )
+            }
+        } else if (maybeList.isEmpty()) {
             item {
                 Box(modifier = Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) {
                     Text("No items waiting for review.", color = TextMuted)
                 }
             }
-        } else {
-            items(pendingList) { item ->
+        }
+
+        if (maybeList.isNotEmpty()) {
+            item {
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Maybe / Needs Clarification (${maybeList.size})",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Warning
+                    )
+                    Badge(containerColor = Warning) {
+                        Text("Low Precision", color = Color.Black)
+                    }
+                }
+                Text(
+                    text = "Items with ambiguous AM/PM times or unspecified hours. Select a reading or edit time to confirm.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextMuted
+                )
+            }
+            items(maybeList, key = { it.id }) { item ->
                 PendingItemCard(
                     item = item,
                     onConfirm = onConfirm,
-                    onDismiss = onDismiss
+                    onDismiss = onDismiss,
+                    onEdit = onEdit
                 )
             }
         }
@@ -799,6 +997,7 @@ fun PendingScreen(
 @Composable
 fun AlertsScreen(
     reminders: List<com.scheduleassistant.app.data.model.ReminderEntity>,
+    confirmedSchedules: List<ScheduleEntity> = emptyList(),
     confirmedCount: Int = 0,
     onDelete: (String) -> Unit = {},
     onRestore: (String) -> Unit = {},
@@ -813,6 +1012,10 @@ fun AlertsScreen(
     val lastError by lastErrorFlow.collectAsState(initial = null)
     val auditsFlow = remember { db.alarmAuditDao().getRecentAuditsFlow(20) }
     val recentAudits by auditsFlow.collectAsState(initial = emptyList())
+
+    val confirmedWithoutAlerts = confirmedSchedules.filter { sched ->
+        !reminders.any { it.schedule_id == sched.id && it.status == com.scheduleassistant.app.data.model.ReminderStatus.SCHEDULED }
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -843,6 +1046,38 @@ fun AlertsScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text("🛑 Stop all alarms", color = Color.White, fontWeight = FontWeight.Bold)
+            }
+        }
+
+        // Requirement 4: Any confirmed item without a scheduled alert shows a red "no alert scheduled: <reason>" badge on Home/Alerts
+        if (confirmedWithoutAlerts.isNotEmpty()) {
+            item {
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Confirmed Schedules Without Active Alerts (${confirmedWithoutAlerts.size})",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Danger
+                    )
+                }
+                Text(
+                    text = "These events are confirmed but have no active alarm or reminder scheduled.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextMuted
+                )
+            }
+            items(confirmedWithoutAlerts, key = { "unscheduled-${it.id}" }) { sched ->
+                ConfirmedScheduleCard(
+                    item = sched,
+                    reminders = reminders,
+                    onDelete = onDelete,
+                    onEdit = onEdit
+                )
             }
         }
 

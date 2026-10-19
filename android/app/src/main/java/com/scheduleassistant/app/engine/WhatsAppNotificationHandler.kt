@@ -49,13 +49,23 @@ class WhatsAppNotificationHandler(
         }
     )
 
-    fun isDeduplicated(chatTitle: String?, cleanText: String, postTime: Long): Boolean {
-        val key = "${chatTitle ?: "chat"}|${cleanText.trim()}|$postTime"
+    fun normalizeTextForDedupe(text: String): String {
+        return text.lowercase().replace(Regex("\\s+"), " ").trim()
+    }
+
+    /**
+     * Requirement 2: Dedupe by (chat, normalized text) within 24h, ignoring post time.
+     */
+    fun isDeduplicated(chatTitle: String?, cleanText: String, postTime: Long = System.currentTimeMillis()): Boolean {
+        val norm = normalizeTextForDedupe(cleanText)
+        val key = "${chatTitle ?: "chat"}|$norm"
+        val now = if (postTime > 0L) postTime else System.currentTimeMillis()
         synchronized(dedupeCache) {
-            if (dedupeCache.containsKey(key)) {
+            val lastSeen = dedupeCache[key]
+            if (lastSeen != null && kotlin.math.abs(now - lastSeen) < 24 * 60 * 60 * 1000L) {
                 return true
             }
-            dedupeCache[key] = System.currentTimeMillis()
+            dedupeCache[key] = now
             return false
         }
     }
@@ -179,8 +189,22 @@ class WhatsAppNotificationHandler(
                 val msgSender = msg.person?.name?.toString()
                 val (finalSender, cleanText) = splitSenderPrefix(msgSender, text)
                 val msgTimestamp = if (msg.timestamp > 0L) msg.timestamp else sbn.postTime
+                val nowMs = System.currentTimeMillis()
 
-                // Deduplicate by (chat, text, post time)
+                // Requirement 1: Skip messages older than 24h
+                if (nowMs - msgTimestamp > 24 * 60 * 60 * 1000L) {
+                    decisions.add(
+                        WhatsAppExtractionDecision(
+                            chatTitle = chatTitle,
+                            isGroup = isGroup,
+                            isAllowlisted = true,
+                            disposition = "skipped: older than 24h"
+                        )
+                    )
+                    continue
+                }
+
+                // Requirement 2: Deduplicate by (chat, normalized text) ignoring post time
                 if (isDeduplicated(chatTitle, cleanText, msgTimestamp)) {
                     decisions.add(
                         WhatsAppExtractionDecision(
@@ -194,7 +218,7 @@ class WhatsAppNotificationHandler(
                 }
 
                 DiagnosticsManager.incrementChatMessageCount(context)
-                val dedupeKey = "${chatTitle ?: "chat"}|$cleanText|$msgTimestamp"
+                val dedupeKey = "${chatTitle ?: "chat"}|${normalizeTextForDedupe(cleanText)}"
                 val extracted = WhatsAppExtractedMessage(
                     packageName = sbn.packageName,
                     notificationKey = sbn.key,
@@ -223,8 +247,20 @@ class WhatsAppNotificationHandler(
 
             if (text.isNotBlank() && !isSystemNotification(text, chatTitle)) {
                 val (finalSender, cleanText) = splitSenderPrefix(chatTitle, text)
+                val msgTimestamp = sbn.postTime
+                val nowMs = System.currentTimeMillis()
 
-                if (isDeduplicated(chatTitle, cleanText, sbn.postTime)) {
+                // Requirement 1: Skip messages older than 24h
+                if (nowMs - msgTimestamp > 24 * 60 * 60 * 1000L) {
+                    decisions.add(
+                        WhatsAppExtractionDecision(
+                            chatTitle = chatTitle,
+                            isGroup = isGroup,
+                            isAllowlisted = true,
+                            disposition = "skipped: older than 24h"
+                        )
+                    )
+                } else if (isDeduplicated(chatTitle, cleanText, msgTimestamp)) {
                     decisions.add(
                         WhatsAppExtractionDecision(
                             chatTitle = chatTitle,
@@ -235,7 +271,7 @@ class WhatsAppNotificationHandler(
                     )
                 } else {
                     DiagnosticsManager.incrementChatMessageCount(context)
-                    val dedupeKey = "${chatTitle ?: "chat"}|$cleanText|${sbn.postTime}"
+                    val dedupeKey = "${chatTitle ?: "chat"}|${normalizeTextForDedupe(cleanText)}"
                     val extracted = WhatsAppExtractedMessage(
                         packageName = sbn.packageName,
                         notificationKey = sbn.key,
@@ -244,7 +280,7 @@ class WhatsAppNotificationHandler(
                         rawText = text,
                         cleanText = cleanText,
                         isGroup = isGroup,
-                        postTime = sbn.postTime,
+                        postTime = msgTimestamp,
                         dedupeKey = dedupeKey
                     )
                     decisions.add(

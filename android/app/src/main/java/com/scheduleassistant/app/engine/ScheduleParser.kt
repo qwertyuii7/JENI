@@ -101,52 +101,107 @@ class ScheduleParser(
             type = "cancel"
         }
 
-        // 2. Relative Day Offset
+        // 2. Explicit Date Matching (e.g., "15 oct", "15th October", "15/10", "(15 oct)", "tomorrow (15 oct)")
+        var hasExplicitDate = false
+        var explicitYear = refYear
+        var explicitMonth = refMonth
+        var explicitDay = refDay
         var dayOffset: Int? = null
         var hasDayMention = false
-        val isNextWeek = Regex("(?i)\\b(next|agle)\\b").containsMatchIn(lower) || lower.contains("अगले")
 
-        if (Regex("(?i)\\b(kal|tomorrow)\\b").containsMatchIn(lower) || lower.contains("कल")) {
-            dayOffset = 1
-            hasDayMention = true
-        } else if (Regex("(?i)\\b(parso|day after tomorrow)\\b").containsMatchIn(lower) || lower.contains("परसों")) {
-            dayOffset = 2
-            hasDayMention = true
-        } else if (Regex("(?i)\\b(tarso)\\b").containsMatchIn(lower)) {
-            dayOffset = 3
-            hasDayMention = true
-        } else if (Regex("(?i)\\b(aaj|today)\\b").containsMatchIn(lower) || lower.contains("आज")) {
-            dayOffset = 0
-            hasDayMention = true
-        } else {
-            val weekdayMap = mapOf(
-                "somvar" to 1, "monday" to 1, "सोमवार" to 1,
-                "mangalvar" to 2, "tuesday" to 2, "मंगलवार" to 2,
-                "budhvar" to 3, "wednesday" to 3, "बुधवार" to 3,
-                "guruvar" to 4, "veervar" to 4, "thursday" to 4, "गुरुवार" to 4,
-                "shukravar" to 5, "friday" to 5, "शुक्रवार" to 5,
-                "shanivar" to 6, "saturday" to 6, "शनिवार" to 6,
-                "ravivar" to 0, "sunday" to 0, "रविवार" to 0
-            )
+        val monthNamesMap = mapOf(
+            "jan" to 1, "january" to 1,
+            "feb" to 2, "february" to 2,
+            "mar" to 3, "march" to 3,
+            "apr" to 4, "april" to 4,
+            "may" to 5,
+            "jun" to 6, "june" to 6,
+            "jul" to 7, "july" to 7,
+            "aug" to 8, "august" to 8,
+            "sep" to 9, "sept" to 9, "september" to 9,
+            "oct" to 10, "october" to 10,
+            "nov" to 11, "november" to 11,
+            "dec" to 12, "december" to 12
+        )
 
-            for ((dayName, dayIndex) in weekdayMap) {
-                if (lower.contains(dayName)) {
-                    hasDayMention = true
-                    if (isNextWeek) {
-                        dayOffset = if (dayIndex == refWeekday) 7 else ((dayIndex - refWeekday + 7) % 7) + 7
-                    } else if (dayIndex == refWeekday) {
-                        dayOffset = null // Resolved after time check
-                    } else {
-                        dayOffset = (dayIndex - refWeekday + 7) % 7
-                    }
-                    break
+        val explicitDate1 = Regex("(?i)\\b\\(?\\s*(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\\b\\s*\\)?").find(lower)
+        val explicitDate2 = Regex("(?i)\\b\\(?\\s*(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b\\s*\\)?").find(lower)
+        val explicitDateNumeric = Regex("\\b(\\d{1,2})/(\\d{1,2})(?:/(\\d{2,4}))?\\b").find(lower)
+
+        if (explicitDate1 != null) {
+            hasExplicitDate = true
+            explicitDay = explicitDate1.groupValues[1].toInt()
+            explicitMonth = monthNamesMap[explicitDate1.groupValues[2].lowercase()] ?: refMonth
+            hasDayMention = true
+        } else if (explicitDate2 != null) {
+            hasExplicitDate = true
+            explicitMonth = monthNamesMap[explicitDate2.groupValues[1].lowercase()] ?: refMonth
+            explicitDay = explicitDate2.groupValues[2].toInt()
+            hasDayMention = true
+        } else if (explicitDateNumeric != null) {
+            val d = explicitDateNumeric.groupValues[1].toInt()
+            val m = explicitDateNumeric.groupValues[2].toInt()
+            if (d in 1..31 && m in 1..12) {
+                hasExplicitDate = true
+                explicitDay = d
+                explicitMonth = m
+                val yStr = explicitDateNumeric.groupValues.getOrNull(3)
+                if (!yStr.isNullOrBlank()) {
+                    val y = yStr.toInt()
+                    explicitYear = if (y < 100) 2000 + y else y
                 }
+                hasDayMention = true
             }
         }
 
-        // Edge case: Late night 23:50 with early morning "raat 5"
-        if (dayOffset == null && refHour >= 22 && Regex("(?i)\\braat\\s+[1-5]\\b").containsMatchIn(lower)) {
-            dayOffset = 1
+        // Relative Day Offset (explicit date overrides relative words)
+        val isNextWeek = Regex("(?i)\\b(next|agle)\\b").containsMatchIn(lower) || lower.contains("अगले")
+
+        if (!hasExplicitDate) {
+            if (Regex("(?i)\\b(kal|tomorrow)\\b").containsMatchIn(lower) || lower.contains("कल")) {
+                dayOffset = 1
+                hasDayMention = true
+            } else if (Regex("(?i)\\b(parso|day after tomorrow)\\b").containsMatchIn(lower) || lower.contains("परसों")) {
+                dayOffset = 2
+                hasDayMention = true
+            } else if (Regex("(?i)\\b(tarso)\\b").containsMatchIn(lower)) {
+                dayOffset = 3
+                hasDayMention = true
+            } else if (Regex("(?i)\\b(aaj|today)\\b").containsMatchIn(lower) || lower.contains("आज")) {
+                dayOffset = 0
+                hasDayMention = true
+            } else {
+                val weekdayMap = mapOf(
+                    "somvar" to 1, "monday" to 1, "सोमवार" to 1,
+                    "mangalvar" to 2, "tuesday" to 2, "मंगलवार" to 2,
+                    "budhvar" to 3, "wednesday" to 3, "बुधवार" to 3,
+                    "guruvar" to 4, "veervar" to 4, "thursday" to 4, "गुरुवार" to 4,
+                    "shukravar" to 5, "friday" to 5, "शुक्रवार" to 5,
+                    "shanivar" to 6, "saturday" to 6, "शनिवार" to 6,
+                    "ravivar" to 0, "sunday" to 0, "रविवार" to 0
+                )
+
+                for ((dayName, dayIndex) in weekdayMap) {
+                    if (lower.contains(dayName)) {
+                        hasDayMention = true
+                        if (isNextWeek) {
+                            dayOffset = if (dayIndex == refWeekday) 7 else ((dayIndex - refWeekday + 7) % 7) + 7
+                        } else if (dayIndex == refWeekday) {
+                            dayOffset = null // Resolved after time check
+                        } else {
+                            dayOffset = (dayIndex - refWeekday + 7) % 7
+                        }
+                        break
+                    }
+                }
+            }
+
+            // Edge case: Late night 23:50 with early morning "raat 5"
+            if (dayOffset == null && refHour >= 22 && Regex("(?i)\\braat\\s+[1-5]\\b").containsMatchIn(lower)) {
+                dayOffset = 1
+                hasDayMention = true
+            }
+        } else {
             hasDayMention = true
         }
 
@@ -164,7 +219,7 @@ class ScheduleParser(
         val isDeadline = Regex("(?i)\\b(deadline)\\b").containsMatchIn(lower)
 
         val multiTimeMatch = Regex("(?i)(\\d{1,2})(?::(\\d{2}))?\\s*(?:baje|बजे)\\s*wali.*?(\\d{1,2})(?::(\\d{2}))?\\s*(?:baje|बजे)\\s*(?:shift|postpone)").find(lower)
-        val timeRangeMatch = Regex("(?i)(?:(subah|dopahar|shaam|sham|raat|सुबह|दोपहर|शाम|रात)\\s+)?\\b(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)?\\s*(?:to|until|till|-|–|—|se|से)\\s*(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm|baje|बजे)?\\b").find(lower)
+        val timeRangeMatch = Regex("(?i)(?:(subah|dopahar|shaam|sham|raat|सुबह|दोपहर|शाम|रात)\\s+)?(?:^|\\b|\\s)(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)?\\s*(?:to|until|till|-|–|—|se|से)\\s*(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm|baje|बजे)?(?:\\b|\\s|$)").find(lower)
 
         val rangeStartH = timeRangeMatch?.groupValues?.getOrNull(2)?.toIntOrNull()
         val rangeStartM = timeRangeMatch?.groupValues?.getOrNull(3)?.toIntOrNull() ?: 0
@@ -231,7 +286,7 @@ class ScheduleParser(
             } else {
                 if (rangeStartMer == "pm" && sH < 12) sH += 12
                 if (rangeStartMer == "am" && sH == 12) sH = 0
-                if (rangeStartMer == null && rangeEndMer == null) {
+                if (rangeEndMer == null || rangeEndMer == "baje" || rangeEndMer == "बजे") {
                     if (sH in 1..6) sH += 12
                     if (eH in 1..6) eH += 12
                 }
@@ -333,7 +388,7 @@ class ScheduleParser(
         }
 
         // Disambiguate same-day past-time with 12h flip
-        if (dayOffset == 0 && hour != null && !isDinner) {
+        if (!hasExplicitDate && dayOffset == 0 && hour != null && !isDinner) {
             val isPast = (hour < refHour) || (hour == refHour && minute <= refMinute)
             if (isPast) {
                 val flipHour = if (hour < 12) hour + 12 else hour - 12
@@ -349,16 +404,32 @@ class ScheduleParser(
         }
 
         // 4. Calendar Date Calculation
-        val targetCal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
-            set(Calendar.YEAR, refYear)
-            set(Calendar.MONTH, refMonth - 1)
-            set(Calendar.DAY_OF_MONTH, refDay)
-            add(Calendar.DAY_OF_MONTH, dayOffset ?: 0)
+        val targetYear: Int
+        val targetMonth: Int
+        val targetDay: Int
+        val startDateStr: String
+
+        if (hasExplicitDate) {
+            targetYear = explicitYear
+            targetMonth = explicitMonth
+            targetDay = explicitDay
+            startDateStr = String.format(Locale.US, "%04d-%02d-%02d", targetYear, targetMonth, targetDay)
+            if (hour == null && endHour == null) {
+                timeUnspecified = true
+                isAmbiguous = true
+            }
+        } else {
+            val targetCal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+                set(Calendar.YEAR, refYear)
+                set(Calendar.MONTH, refMonth - 1)
+                set(Calendar.DAY_OF_MONTH, refDay)
+                add(Calendar.DAY_OF_MONTH, dayOffset ?: 0)
+            }
+            targetYear = targetCal.get(Calendar.YEAR)
+            targetMonth = targetCal.get(Calendar.MONTH) + 1
+            targetDay = targetCal.get(Calendar.DAY_OF_MONTH)
+            startDateStr = String.format(Locale.US, "%04d-%02d-%02d", targetYear, targetMonth, targetDay)
         }
-        val targetYear = targetCal.get(Calendar.YEAR)
-        val targetMonth = targetCal.get(Calendar.MONTH) + 1
-        val targetDay = targetCal.get(Calendar.DAY_OF_MONTH)
-        val startDateStr = String.format(Locale.US, "%04d-%02d-%02d", targetYear, targetMonth, targetDay)
 
         var startIso: String? = null
         if (!timeUnspecified && hour != null) {

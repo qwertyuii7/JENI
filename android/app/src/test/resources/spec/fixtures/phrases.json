@@ -3581,5 +3581,359 @@
         "source_quote": "OS वाली क्लास रद्द"
       }
     }
+  },
+  {
+    "id": "fix-229",
+    "input": "kal 7:15 to 8:00pm class hai",
+    "reference_now": "2026-10-12T10:00:00+05:30",
+    "category": "schedule_new",
+    "language": "hinglish",
+    "expected": {
+      "is_schedule": true,
+      "extraction": {
+        "type": "new",
+        "title": "class",
+        "start": "2026-10-13T19:15:00+05:30",
+        "confidence": 0.9,
+        "source_quote": "kal 7:15 to 8:00pm class"
+      }
+    }
+  },
+  {
+    "id": "fix-230",
+    "input": "kal 7:15 - 8:00pm meeting",
+    "reference_now": "2026-10-12T10:00:00+05:30",
+    "category": "schedule_new",
+    "language": "hinglish",
+    "expected": {
+      "is_schedule": true,
+      "extraction": {
+        "type": "new",
+        "title": "meeting",
+        "start": "2026-10-13T19:15:00+05:30",
+        "confidence": 0.9,
+        "source_quote": "kal 7:15 - 8:00pm meeting"
+      }
+    }
+  },
+  {
+    "id": "fix-231",
+    "input": "kal 10 to 11:30 am standup",
+    "reference_now": "2026-10-12T10:00:00+05:30",
+    "category": "schedule_new",
+    "language": "hinglish",
+    "expected": {
+      "is_schedule": true,
+      "extraction": {
+        "type": "new",
+        "title": "standup",
+        "start": "2026-10-13T10:00:00+05:30",
+        "confidence": 0.9,
+        "source_quote": "kal 10 to 11:30 am standup"
+      }
+    }
+  },
+  {
+    "id": "fix-232",
+    "input": "kal 11 to 1pm workshop",
+    "reference_now": "2026-10-12T10:00:00+05:30",
+    "category": "schedule_new",
+    "language": "hinglish",
+    "expected": {
+      "is_schedule": true,
+      "extraction": {
+        "type": "new",
+        "title": "workshop",
+        "start": "2026-10-13T11:00:00+05:30",
+        "confidence": 0.9,
+        "source_quote": "kal 11 to 1pm workshop"
+      }
+    }
+  },
+  {
+    "id": "fix-233",
+    "input": "kal 12 to 1pm lunch meeting",
+    "reference_now": "2026-10-12T10:00:00+05:30",
+    "category": "schedule_new",
+    "language": "hinglish",
+    "expected": {
+      "is_schedule": true,
+      "extraction": {
+        "type": "new",
+        "title": "lunch meeting",
+        "start": "2026-10-13T12:00:00+05:30",
+        "confidence": 0.9,
+        "source_quote": "kal 12 to 1pm lunch meeting"
+      }
+    }
+  },
+  {
+    "id": "fix-234",
+    "input": "kal 9:30-10:30pm project sync",
+    "reference_now": "2026-10-12T10:00:00+05:30",
+    "category": "schedule_new",
+    "language": "hinglish",
+    "expected": {
+      "is_schedule": true,
+      "extraction": {
+        "type": "new",
+        "title": "project sync",
+        "start": "2026-10-13T21:30:00+05:30",
+        "confidence": 0.9,
+        "source_quote": "kal 9:30-10:30pm project sync"
+      }
+    }
+  },
+  {
+    "id": "fix-235",
+    "input": "kal 4 se 5 baje lab test hai",
+    "reference_now": "2026-10-12T10:00:00+05:30",
+    "category": "schedule_new",
+    "language": "hinglish",
+    "expected": {
+      "is_schedule": true,
+      "extraction": {
+        "type": "new",
+        "title": "lab test",
+        "start": "2026-10-13T16:00:00+05:30",
+        "confidence": 0.9,
+        "source_quote": "kal 4 se 5 baje lab test"
+      }
+    }
+  },
+  {
+    "id": "fix-236",
+    "input": "kal shaam 6 to 7 baje webinar",
+    "reference_now": "2026-10-12T10:00:00+05:30",
+    "category": "schedule_new",
+    "language": "hinglish",
+    "expected": {
+      "is_schedule": true,
+      "extraction": {
+        "type": "new",
+        "title": "webinar",
+        "start": "2026-10-13T18:00:00+05:30",
+        "confidence": 0.9,
+        "source_quote": "kal shaam 6 to 7 baje webinar"
+      }
+    }
+  },
+  {
+    "id": "fix-237",
+    "input": "कल ४ से ५ बजे क्लास है",
+    "reference_now": "2026-10-12T10:00:00+05:30",
+    "category": "schedule_new",
+    "language": "hindi",
+    "expected": {
+      "is_schedule": true,
+      "extraction": {
+        "type": "new",
+        "title": "क्लास",
+        "start": "2026-10-13T16:00:00+05:30",
+        "confidence": 0.9,
+        "source_quote": "कल 4 से 5 बजे क्लास"
+      }
+    }
+  },
+  {
+    "id": "fix-238",
+    "input": "कल शाम ६ से ७ बजे सेमिनार",
+    "reference_now": "2026-10-12T10:00:00+05:30",
+    "category": "schedule_new",
+    "language": "hindi",
+    "expected": {
+      "is_schedule": true,
+      "extraction": {
+        "type": "new",
+        "title": "सेमिनार",
+        "start": "2026-10-13T18:00:00+05:30",
+        "confidence": 0.9,
+        "source_quote": "कल शाम 6 से 7 बजे सेमिनार"
+      }
+    }
+  },
+  {
+    "id": "fix-239",
+    "input": "15 oct 5 baje DBMS class hai",
+    "reference_now": "2026-10-12T10:00:00+05:30",
+    "category": "schedule_new",
+    "language": "hinglish",
+    "expected": {
+      "is_schedule": true,
+      "extraction": {
+        "type": "new",
+        "title": "DBMS class",
+        "start": "2026-10-15T17:00:00+05:30",
+        "confidence": 0.9,
+        "source_quote": "15 oct 5 baje DBMS class"
+      }
+    }
+  },
+  {
+    "id": "fix-240",
+    "input": "15th October 4pm meeting",
+    "reference_now": "2026-10-12T10:00:00+05:30",
+    "category": "schedule_new",
+    "language": "english",
+    "expected": {
+      "is_schedule": true,
+      "extraction": {
+        "type": "new",
+        "title": "meeting",
+        "start": "2026-10-15T16:00:00+05:30",
+        "confidence": 0.9,
+        "source_quote": "15th October 4pm meeting"
+      }
+    }
+  },
+  {
+    "id": "fix-241",
+    "input": "15/10 11am viva",
+    "reference_now": "2026-10-12T10:00:00+05:30",
+    "category": "schedule_new",
+    "language": "english",
+    "expected": {
+      "is_schedule": true,
+      "extraction": {
+        "type": "new",
+        "title": "viva",
+        "start": "2026-10-15T11:00:00+05:30",
+        "confidence": 0.9,
+        "source_quote": "15/10 11am viva"
+      }
+    }
+  },
+  {
+    "id": "fix-242",
+    "input": "(15 oct) 10:00 AM seminar",
+    "reference_now": "2026-10-12T10:00:00+05:30",
+    "category": "schedule_new",
+    "language": "english",
+    "expected": {
+      "is_schedule": true,
+      "extraction": {
+        "type": "new",
+        "title": "seminar",
+        "start": "2026-10-15T10:00:00+05:30",
+        "confidence": 0.9,
+        "source_quote": "(15 oct) 10:00 AM seminar"
+      }
+    }
+  },
+  {
+    "id": "fix-243",
+    "input": "tomorrow (15 oct) 3pm presentation",
+    "reference_now": "2026-10-12T10:00:00+05:30",
+    "category": "schedule_new",
+    "language": "english",
+    "expected": {
+      "is_schedule": true,
+      "extraction": {
+        "type": "new",
+        "title": "presentation",
+        "start": "2026-10-15T15:00:00+05:30",
+        "confidence": 0.9,
+        "source_quote": "tomorrow (15 oct) 3pm presentation"
+      }
+    }
+  },
+  {
+    "id": "fix-244",
+    "input": "Flash sale ends tonight! 50% off till 12 midnight, use code FLASH50",
+    "reference_now": "2026-10-12T10:00:00+05:30",
+    "category": "promo_negative",
+    "language": "english",
+    "expected": {
+      "is_schedule": false,
+      "extraction": null
+    }
+  },
+  {
+    "id": "fix-245",
+    "input": "Mega Sale: Flat 40% off on all items, deadline today 11:59 pm!",
+    "reference_now": "2026-10-12T10:00:00+05:30",
+    "category": "promo_negative",
+    "language": "english",
+    "expected": {
+      "is_schedule": false,
+      "extraction": null
+    }
+  },
+  {
+    "id": "fix-246",
+    "input": "rat me try krna 1-2 baje k bich",
+    "reference_now": "2026-10-12T10:00:00+05:30",
+    "category": "banter_negative",
+    "language": "hinglish",
+    "expected": {
+      "is_schedule": false,
+      "extraction": null
+    }
+  },
+  {
+    "id": "fix-247",
+    "input": "bhai shaam me 4-5 baje ke aas pass dekhna",
+    "reference_now": "2026-10-12T10:00:00+05:30",
+    "category": "banter_negative",
+    "language": "hinglish",
+    "expected": {
+      "is_schedule": false,
+      "extraction": null
+    }
+  },
+  {
+    "id": "fix-248",
+    "input": "I will send the tasks tomorrow afternoon",
+    "reference_now": "2026-10-12T10:00:00+05:30",
+    "category": "personal_plan_negative",
+    "language": "english",
+    "expected": {
+      "is_schedule": false,
+      "extraction": null
+    }
+  },
+  {
+    "id": "fix-249",
+    "input": "I will send the tasks to everyone tomorrow afternoon according to their respective roles.",
+    "reference_now": "2026-10-12T10:00:00+05:30",
+    "category": "personal_plan_negative",
+    "language": "english",
+    "expected": {
+      "is_schedule": false,
+      "extraction": null
+    }
+  },
+  {
+    "id": "fix-250",
+    "input": "mai kal tasks bhej dunga",
+    "reference_now": "2026-10-12T10:00:00+05:30",
+    "category": "personal_plan_negative",
+    "language": "hinglish",
+    "expected": {
+      "is_schedule": false,
+      "extraction": null
+    }
+  },
+  {
+    "id": "fix-251",
+    "input": "Roll numbers for presentation:\n21BCS001\n21BCS002\n21BCS003\n21BCS004",
+    "reference_now": "2026-10-12T10:00:00+05:30",
+    "category": "roll_number_list_negative",
+    "language": "english",
+    "expected": {
+      "is_schedule": false,
+      "extraction": null
+    }
+  },
+  {
+    "id": "fix-252",
+    "input": "Roll numbers: 101, 102, 103, 104, 105, 106, 107",
+    "reference_now": "2026-10-12T10:00:00+05:30",
+    "category": "roll_number_list_negative",
+    "language": "english",
+    "expected": {
+      "is_schedule": false,
+      "extraction": null
+    }
   }
 ]

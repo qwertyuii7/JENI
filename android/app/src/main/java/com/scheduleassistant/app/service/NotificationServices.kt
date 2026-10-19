@@ -195,21 +195,35 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
                 timeZone = TimeZone.getTimeZone("UTC")
             }.format(Date())
 
-            val localIsoNow = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).apply {
-                timeZone = TimeZone.getDefault()
-            }.format(Date())
-
+            val kolkataTz = TimeZone.getTimeZone("Asia/Kolkata")
             val db = AppDatabase.getInstance(applicationContext)
 
             for (dec in decisions) {
                 var prefilterResult: String? = null
                 var parserOutputJson: String? = null
+                var finalDisposition = dec.disposition
 
                 if (dec.disposition == "processed" && dec.message != null) {
                     val msg = dec.message
+                    // Requirement 1: Reference time for parsing = message's own timestamp pinned to Asia/Kolkata
+                    val msgRefIso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).apply {
+                        timeZone = kolkataTz
+                    }.format(Date(msg.postTime))
+
                     val filterResult = prefilter.prefilter(msg.cleanText)
                     prefilterResult = if (filterResult.shouldParse) "passed" else (filterResult.reason ?: "rejected")
-                    val extraction = if (filterResult.shouldParse) parser.parse(msg.cleanText, referenceNow = localIsoNow) else null
+                    val extraction = if (filterResult.shouldParse) parser.parse(msg.cleanText, referenceNow = msgRefIso) else null
+
+                    // Requirement 1: Skip anything resolving to the past, logging the reason
+                    var isPast = false
+                    if (extraction != null) {
+                        val startMs = extraction.start?.let { parseIsoTimestamp(it) }
+                            ?: extraction.start_date?.let { parseIsoTimestamp("${it}T23:59:59+05:30") }
+                        if (startMs != null && startMs <= System.currentTimeMillis()) {
+                            isPast = true
+                            finalDisposition = "skipped: resolved to past"
+                        }
+                    }
 
                     parserOutputJson = extraction?.let { ext ->
                         JSONObject().apply {
@@ -240,15 +254,15 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
                     )
                     db.diagnosticLogDao().insertDiagnosticLog(diagLog)
 
-                    // Requirement 2: Log-only mode creates NO pending events or alarms
-                    if (!isLogOnly) {
+                    // Requirement 1 & 2: Skip messages resolving to past or if log-only mode
+                    if (!isLogOnly && !isPast) {
                         // Normal Mode: persist raw message and ingest through pipeline
                         val rawMsgId = "raw-${UUID.randomUUID()}"
                         db.rawMessageDao().insertRawMessage(
                             RawMessageEntity(id = rawMsgId, rawText = msg.rawText, source = "whatsapp", createdAt = nowIso)
                         )
 
-                        val result = pipeline.processMessage(msg.cleanText, referenceNow = localIsoNow)
+                        val result = pipeline.processMessage(msg.cleanText, referenceNow = msgRefIso)
 
                         if (result.status == "PENDING" && result.entityId != null) {
                             val nextSeq = db.eventDao().getNextSeq("android-phone")
@@ -299,7 +313,7 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
                     chatTitle = dec.chatTitle,
                     isGroup = dec.isGroup,
                     isAllowlisted = dec.isAllowlisted,
-                    disposition = dec.disposition,
+                    disposition = finalDisposition,
                     prefilterResult = prefilterResult,
                     parserOutput = parserOutputJson
                 )

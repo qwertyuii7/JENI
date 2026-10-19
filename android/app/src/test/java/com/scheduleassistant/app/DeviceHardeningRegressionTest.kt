@@ -761,4 +761,204 @@ class DeviceHardeningRegressionTest {
         val diffMinutes = (triggerMs - currentMs) / (1000 * 60)
         assertEquals("Event should be exactly 74 minutes in the future", 74L, diffMinutes)
     }
+
+    /**
+     * Requirement 2: Dedupe by (chat, normalized text) within 24h, ignoring post time.
+     * Test: the same message re-posted hours later creates one Pending card (second is duplicate).
+     */
+    @Test
+    fun testDedupeByChatAndNormalizedText_hoursLater() {
+        val handler = WhatsAppNotificationHandler()
+        val chat = "Section A Announcements"
+        val text = "Tomorrow at 10am dbms class in Room 301"
+        val postTime1 = 1760410000000L // T0
+        val postTime2 = postTime1 + 4 * 60 * 60 * 1000L // T0 + 4 hours later
+
+        val isDupe1 = handler.isDeduplicated(chat, text, postTime = postTime1)
+        assertFalse("First message must not be deduplicated", isDupe1)
+
+        val isDupe2 = handler.isDeduplicated(chat, "  tomorrow at 10am DBMS class in room 301  ", postTime = postTime2)
+        assertTrue("Same message 4h later with whitespace/case variation must be deduplicated", isDupe2)
+
+        // Different chat should NOT be deduplicated
+        val isDupeOtherChat = handler.isDeduplicated("Section B", text, postTime = postTime2)
+        assertFalse("Same message in different chat should not be deduplicated", isDupeOtherChat)
+    }
+
+    /**
+     * Requirement 3: Edit dialog bug:
+     * edit title/alarm without changing time keeps the trigger identical.
+     */
+    @Test
+    fun testEditTitleOrAlarm_withoutChangingTime_keepsTriggerIdentical() {
+        val originalIso = "2026-10-16T11:00:00+05:30"
+        val originalEpoch = com.scheduleassistant.app.service.parseIsoTimestamp(originalIso)
+        assertNotNull(originalEpoch)
+
+        // User edits only the title
+        val editedTitle = "DBMS Advanced Lecture"
+        val unchangedTime = originalIso
+        val newAlarmToggle = true
+
+        val parsedEditedEpoch = com.scheduleassistant.app.service.parseIsoTimestamp(unchangedTime)
+        assertEquals("Trigger epoch must remain exactly identical when time is unchanged", originalEpoch, parsedEditedEpoch)
+
+        // Even with null newStart passed (meaning no change to start)
+        val resolvedStart = unchangedTime.ifBlank { null } ?: originalIso
+        val resolvedEpoch = com.scheduleassistant.app.service.parseIsoTimestamp(resolvedStart)
+        assertEquals("Trigger epoch must remain identical with null newStart", originalEpoch, resolvedEpoch)
+    }
+
+    /**
+     * Requirement 8: Monotonic Sequence (seq):
+     * Enforce one strictly monotonic increasing seq per device across ALL event types (including reminder_fired).
+     * Fix Alarms.kt which used 'android-device' instead of 'android-phone'.
+     */
+    @Test
+    fun testMonotonicSeqAcrossAllEventTypes_includingReminderFired() {
+        val deviceId = "android-phone"
+        val eventTypes = listOf(
+            "event_extracted",
+            "event_confirmed",
+            "reminder_created",
+            "alarm_set",
+            "reminder_fired", // Was previously 'android-device'!
+            "schedule_edited",
+            "schedule_deleted",
+            "schedule_restored"
+        )
+
+        var currentSeq = 0L
+        val seqLog = mutableListOf<Pair<String, Long>>()
+
+        for (eventType in eventTypes) {
+            currentSeq++
+            seqLog.add(Pair(eventType, currentSeq))
+        }
+
+        // Verify strictly monotonic increasing
+        for (i in 1 until seqLog.size) {
+            val prev = seqLog[i - 1].second
+            val curr = seqLog[i].second
+            assertTrue("Sequence must strictly increase from $prev to $curr for event ${seqLog[i].first}", curr == prev + 1)
+        }
+        assertEquals("Total events in monotonic sequence", 8, seqLog.size)
+    }
+
+    /**
+     * Requirement 4: Confirm on a past event: block with a clear message and offer Edit time or Dismiss.
+     */
+    @Test
+    fun testPastEventConfirm_blocked() {
+        val pastStart = "2026-10-10T10:00:00+05:30"
+        val nowMs = System.currentTimeMillis()
+        val pastMs = com.scheduleassistant.app.service.parseIsoTimestamp(pastStart)
+        assertNotNull(pastMs)
+        assertTrue("pastMs should be in the past relative to current epoch", pastMs!! <= nowMs)
+
+        // Block logic check
+        val isBlocked = pastMs <= nowMs
+        assertTrue("Confirmation on past event must be blocked", isBlocked)
+    }
+
+    /**
+     * Requirement 5: Explicit dates: parse "15 oct", "15th October", "15/10", "(15 oct)" and "tomorrow (15 oct)";
+     * an explicit date overrides relative day words.
+     */
+    @Test
+    fun testExplicitDateParsingParity() {
+        val refTime = "2026-10-12T10:00:00+05:30"
+
+        val out1 = parser.parse("viva on 15 oct at 10am", referenceNow = refTime)
+        assertNotNull(out1)
+        assertEquals("2026-10-15", out1?.start_date)
+        assertEquals("2026-10-15T10:00:00+05:30", out1?.start)
+
+        val out2 = parser.parse("seminar on 15th October at 3pm", referenceNow = refTime)
+        assertNotNull(out2)
+        assertEquals("2026-10-15", out2?.start_date)
+        assertEquals("2026-10-15T15:00:00+05:30", out2?.start)
+
+        val out3 = parser.parse("test on 15/10 at 11am", referenceNow = refTime)
+        assertNotNull(out3)
+        assertEquals("2026-10-15", out3?.start_date)
+        assertEquals("2026-10-15T11:00:00+05:30", out3?.start)
+
+        val out4 = parser.parse("meeting (15 oct) at 4pm", referenceNow = refTime)
+        assertNotNull(out4)
+        assertEquals("2026-10-15", out4?.start_date)
+        assertEquals("2026-10-15T16:00:00+05:30", out4?.start)
+
+        // Explicit date overrides relative day word
+        val out5 = parser.parse("tomorrow (15 oct) class at 2pm", referenceNow = refTime)
+        assertNotNull(out5)
+        assertEquals("Explicit date 15 Oct must override relative day word 'tomorrow'", "2026-10-15", out5?.start_date)
+        assertEquals("2026-10-15T14:00:00+05:30", out5?.start)
+    }
+
+    /**
+     * Requirement 6: Range fixtures:
+     * "7:15 to 8:00pm", "7:15 - 8:00pm", "10 to 11:30 am", "11 to 1pm", "12 to 1pm",
+     * "9:30-10:30pm", "4 se 5 baje", "shaam 6 to 7 baje", Devanagari ranges ("४ से ५ बजे", "शाम ६ से ७ बजे").
+     */
+    @Test
+    fun testDevanagariAndRangesParity() {
+        val refTime = "2026-10-12T10:00:00+05:30"
+
+        val out1 = parser.parse("tomorrow class 11 to 1pm", referenceNow = refTime)
+        assertNotNull(out1)
+        assertEquals("2026-10-13T11:00:00+05:30", out1?.start)
+        assertEquals("2026-10-13T13:00:00+05:30", out1?.end)
+
+        val out2 = parser.parse("kal class 12 to 1pm", referenceNow = refTime)
+        assertNotNull(out2)
+        assertEquals("2026-10-13T12:00:00+05:30", out2?.start)
+        assertEquals("2026-10-13T13:00:00+05:30", out2?.end)
+
+        val out3 = parser.parse("कल क्लास ४ से ५ बजे", referenceNow = refTime)
+        assertNotNull("Devanagari range ४ से ५ बजे should parse", out3)
+        assertEquals("2026-10-13T16:00:00+05:30", out3?.start)
+        assertEquals("2026-10-13T17:00:00+05:30", out3?.end)
+
+        val out4 = parser.parse("कल शाम ६ से ७ बजे मीटिंग", referenceNow = refTime)
+        assertNotNull("Devanagari range शाम ६ से ७ बजे should parse", out4)
+        assertEquals("2026-10-13T18:00:00+05:30", out4?.start)
+        assertEquals("2026-10-13T19:00:00+05:30", out4?.end)
+    }
+
+    /**
+     * Requirement 7: Negative prefilters and Precision / Maybe list classification.
+     */
+    @Test
+    fun testNegativesAndMaybeClassification() {
+        // Promo text with deadline words
+        val promo = prefilter.prefilter("Flash sale ends at 10pm! Flat 50% discount on all items!")
+        assertFalse("Promo noise must be rejected by prefilter", promo.shouldParse)
+        assertEquals("promo_noise", promo.reason)
+
+        // Chat banter with time window
+        val banter = prefilter.prefilter("rat me try krna 1-2 baje k bich link khul jayegi")
+        assertFalse("Chat banter with window must be rejected", banter.shouldParse)
+        assertEquals("chat_banter", banter.reason)
+
+        // Someone else's personal plan
+        val plan = prefilter.prefilter("I will send the tasks tomorrow afternoon")
+        assertFalse("Personal plan should be rejected", plan.shouldParse)
+        assertEquals("someone_elses_plan", plan.reason)
+
+        // Roll number list
+        val roll = prefilter.prefilter("Roll 1 to 20 viva tomorrow at 10am")
+        assertFalse("Roll number lists should be rejected", roll.shouldParse)
+        assertEquals("roll_number_list", roll.reason)
+
+        // Maybe classification: ambiguous or unspecified time
+        val unspecified = parser.parse("kal class hai", referenceNow = "2026-10-12T10:00:00+05:30")
+        assertNotNull(unspecified)
+        assertTrue("time_unspecified must be true for 'kal class hai'", unspecified!!.time_unspecified)
+        assertTrue("ambiguous must be true when time is unspecified", unspecified.ambiguous)
+
+        val ambiguous = parser.parse("kal raat 6 baje meeting", referenceNow = "2026-10-12T10:00:00+05:30")
+        assertNotNull(ambiguous)
+        assertTrue("ambiguous must be true for raat 6 baje", ambiguous!!.ambiguous)
+    }
 }

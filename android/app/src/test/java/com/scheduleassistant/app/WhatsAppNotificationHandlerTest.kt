@@ -37,13 +37,17 @@ class WhatsAppNotificationHandlerTest {
         val isSecondDup = handler.isDeduplicated(chat, text, postTime)
         assertTrue("Subsequent notification with identical (chat, text, postTime) MUST be deduplicated", isSecondDup)
 
-        // Different post time: new message
-        val isDifferentPostTime = handler.isDeduplicated(chat, text, postTime + 5000L)
-        assertFalse("Notification with new postTime should not be deduplicated", isDifferentPostTime)
+        // Same message with new post time within 24h: should be deduplicated ignoring post time
+        val isSameMessageNewTime = handler.isDeduplicated(chat, text, postTime + 5000L)
+        assertTrue("Notification within 24h should be deduplicated ignoring post time", isSameMessageNewTime)
 
         // Different text: new message
         val isDifferentText = handler.isDeduplicated(chat, "parso 10 baje quiz", postTime)
         assertFalse("Notification with new text should not be deduplicated", isDifferentText)
+
+        // After 24h: should no longer be deduplicated
+        val isAfter24h = handler.isDeduplicated(chat, text, postTime + 25 * 60 * 60 * 1000L)
+        assertFalse("Notification after 24h should not be deduplicated", isAfter24h)
     }
 
     @Test
