@@ -45,7 +45,7 @@ class SpecParityTest {
         assertTrue("Assets spec dir must exist", assetsSpecDir.exists())
         assertTrue("Test resources spec dir must exist", testResourcesSpecDir.exists())
 
-        val rootJsonFiles = listOf("dayparts.json", "fillers.json", "keywords.json", "synonyms.json")
+        val rootJsonFiles = listOf("dayparts.json", "fillers.json", "keywords.json", "synonyms.json", "signals.json")
         for (filename in rootJsonFiles) {
             val rootFile = File(specRoot, filename)
             assertTrue("Root spec file must exist: $filename", rootFile.exists())
@@ -68,7 +68,7 @@ class SpecParityTest {
             )
         }
 
-        val fixtureFiles = listOf("phrases.json", "matching.json")
+        val fixtureFiles = listOf("phrases.json", "matching.json", "triage.json")
         for (filename in fixtureFiles) {
             val rootFixture = File(File(specRoot, "fixtures"), filename)
             assertTrue("Root fixture must exist: $filename", rootFixture.exists())
