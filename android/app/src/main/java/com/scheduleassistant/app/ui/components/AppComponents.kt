@@ -68,11 +68,10 @@ fun AppTopHeader(
                             .border(1.dp, CardBorder, RoundedCornerShape(9.dp)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(
+                        androidx.compose.foundation.Image(
                             painter = painterResource(id = R.drawable.ic_logo_brand),
                             contentDescription = "Schedule Assistant Logo",
-                            tint = Color.Unspecified,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(26.dp)
                         )
                     }
 
@@ -517,3 +516,4 @@ fun AttributionMark(
         )
     }
 }
+

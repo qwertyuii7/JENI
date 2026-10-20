@@ -19,6 +19,8 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import com.scheduleassistant.app.data.db.AppDatabase
 import com.scheduleassistant.app.data.db.SoakCheckpointEntity
 import com.scheduleassistant.app.data.diagnostics.DiagnosticsManager
+import com.scheduleassistant.app.R
+import androidx.compose.ui.res.painterResource
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
 import androidx.compose.foundation.background
@@ -2980,17 +2982,16 @@ fun SettingsScreen(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(40.dp)
-                            .clip(RoundedCornerShape(10.dp))
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(12.dp))
                             .background(CardElevated)
-                            .border(1.dp, CardBorder, RoundedCornerShape(10.dp)),
+                            .border(1.dp, CardBorder, RoundedCornerShape(12.dp)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Schedule,
-                            contentDescription = null,
-                            tint = Primary,
-                            modifier = Modifier.size(22.dp)
+                        androidx.compose.foundation.Image(
+                            painter = painterResource(id = R.drawable.ic_logo_brand),
+                            contentDescription = "Schedule Assistant Mascot",
+                            modifier = Modifier.size(34.dp)
                         )
                     }
 
