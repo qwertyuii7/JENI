@@ -4,6 +4,7 @@ import com.scheduleassistant.app.data.model.ExtractionOutput
 import com.scheduleassistant.app.data.model.ScheduleEntity
 import com.scheduleassistant.app.data.model.ScheduleStatus
 import com.scheduleassistant.app.data.model.SyncEvent
+import com.scheduleassistant.app.data.projection.ProjectionEngine
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -140,7 +141,7 @@ class IngestionPipeline(
             }
 
             for (sched in existingSchedules.values) {
-                if (sched.status == ScheduleStatus.DISMISSED || sched.status == ScheduleStatus.CANCELLED) continue
+                if (sched.deleted || sched.status == ScheduleStatus.DELETED || sched.status == ScheduleStatus.DISMISSED || sched.status == ScheduleStatus.CANCELLED) continue
                 val sTitle = sched.title.lowercase().trim()
                 val cleanSched = specLoader.normalizeTitleForMatching(sTitle)
                 val isSynonym = specLoader.intraTypeSynonyms[targetTitle]?.contains(sTitle) == true ||
@@ -303,51 +304,6 @@ class IngestionPipeline(
     }
 
     private fun getProjectedSchedules(): Map<String, ScheduleEntity> {
-        val map = mutableMapOf<String, ScheduleEntity>()
-        val sorted = eventStore.sortedWith { a, b ->
-            HlcClock.compare(a.hlc, a.device_id, b.hlc, b.device_id)
-        }
-
-        for (ev in sorted) {
-            when (ev.type) {
-                "event_extracted" -> {
-                    map[ev.entity_id] = ScheduleEntity(
-                        id = ev.entity_id,
-                        title = ev.payload["title"] as? String ?: "event",
-                        start = ev.payload["start"] as? String,
-                        start_date = ev.payload["start_date"] as? String,
-                        time_unspecified = ev.payload["time_unspecified"] as? Boolean ?: false,
-                        ambiguous = ev.payload["ambiguous"] as? Boolean ?: false,
-                        status = ScheduleStatus.PENDING,
-                        source_quote = ev.payload["source_quote"] as? String ?: "",
-                        raw_text = ev.payload["raw_text"] as? String,
-                        confidence = (ev.payload["confidence"] as? Number)?.toDouble() ?: 0.8,
-                        created_at = ev.timestamp,
-                        updated_at = ev.timestamp
-                    )
-                }
-                "event_confirmed" -> {
-                    val s = map[ev.entity_id]
-                    if (s != null) {
-                        s.status = ScheduleStatus.CONFIRMED
-                        s.ambiguous = false
-                        s.updated_at = ev.timestamp
-                        val override = ev.payload["start"] as? String
-                        if (override != null) {
-                            s.start = override
-                            s.time_unspecified = false
-                        }
-                    }
-                }
-                "event_dismissed" -> {
-                    val s = map[ev.entity_id]
-                    if (s != null) {
-                        s.status = ScheduleStatus.DISMISSED
-                        s.updated_at = ev.timestamp
-                    }
-                }
-            }
-        }
-        return map
+        return ProjectionEngine.projectState(eventStore).schedules
     }
 }

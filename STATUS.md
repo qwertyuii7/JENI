@@ -15,6 +15,14 @@
 - Recorded baseline benchmark metrics in [docs/METRICS.md](file:///c:/prompts/ai_agent/docs/METRICS.md).
 - Modeled live pipeline trace data contracts in [DecisionTrace.kt](file:///c:/prompts/ai_agent/android/app/src/main/java/com/scheduleassistant/app/domain/DecisionTrace.kt).
 - Prepared [spec/fixtures/labeling_template.json](file:///c:/prompts/ai_agent/spec/fixtures/labeling_template.json) containing 100 distinct real messages from the owner's diagnostics export for labeling.
+- Deep Bug Analysis & Test-Driven Defect Resolution:
+  - Added [DeepBugFixAnalysisTest.kt](file:///c:/prompts/ai_agent/android/app/src/test/java/com/scheduleassistant/app/DeepBugFixAnalysisTest.kt) reproducing and verifying 6 deep edge-case defects.
+  - Bug 1 (Year Rollover): Late December messages referencing early months without explicit year roll over to next year instead of resolving to past.
+  - Bug 2 (Cross-Midnight Ranges): Overnight time ranges (e.g. 10 PM to 2 AM) roll over `endIso` date to the next day instead of setting end 20 hours prior to start on the same day.
+  - Bug 3 (Exact Noon / Midnight Matching): Added natural language keywords `noon` (`12:00`) and `midnight` (`00:00`) so they parse as concrete times rather than `time_unspecified`.
+  - Bug 4 (Numeric Date Delimiters with Collision Guards): Added support for dot (`20.10`) and hyphen (`15-10-2026`) date delimiters with strict negative lookaround guards (`(?<![:\d])` and `(?![:\d]|(?:am|pm|baje))`) ensuring time ranges like `9:30-10:30` are never falsely parsed as dates (`30-10`).
+  - Bug 5 (Devanagari Month Names): Added Hindi month names (जनवरी through दिसम्बर) in `monthNamesMap` and `monthNamesPattern`.
+  - Bug 6 (IngestionPipeline Projection Integrity): Replaced custom, incomplete event projection loop in `IngestionPipeline` with unified `ProjectionEngine.projectState(eventStore).schedules`, ensuring deleted schedules (`ScheduleStatus.DELETED` / `sched.deleted`) are not matched during entity candidate resolution.
 
 ### In Progress
 - Owner labeling 100 real messages and establishing the 40-message holdout file.
@@ -24,8 +32,9 @@
 - None.
 
 ### Test Counts (HTML Reports)
-- **Android JVM Unit Tests**: 59 passed, 0 failures across 13 test classes ([index.html](file:///c:/prompts/ai_agent/android/app/build/reports/tests/testDebugUnitTest/index.html)).
+- **Android JVM Unit Tests**: 65 passed, 0 failures across 14 test classes ([index.html](file:///c:/prompts/ai_agent/android/app/build/reports/tests/testDebugUnitTest/index.html)).
 - **Vitest Suites**: 69 passed, 0 failures across 17 test files (`spec`: 14, `core`: 22, `laptop`: 33).
+- **Total Monorepo Tests**: 134 passed, 0 failures (100% success rate).
 - **Architecture Boundary**: Verified pure Kotlin in `domain/` with 0 `android.*` imports.
 - **APK Size**: 17.3 MB (18,132,450 bytes) at `C:\Users\samsung\Downloads\ScheduleAssistant-debug.apk` (No installs on Day 2).
 

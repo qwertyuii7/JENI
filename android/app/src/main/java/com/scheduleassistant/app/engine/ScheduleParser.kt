@@ -110,23 +110,31 @@ class ScheduleParser(
         var hasDayMention = false
 
         val monthNamesMap = mapOf(
-            "jan" to 1, "january" to 1,
-            "feb" to 2, "february" to 2,
-            "mar" to 3, "march" to 3,
-            "apr" to 4, "april" to 4,
-            "may" to 5,
-            "jun" to 6, "june" to 6,
-            "jul" to 7, "july" to 7,
-            "aug" to 8, "august" to 8,
-            "sep" to 9, "sept" to 9, "september" to 9,
-            "oct" to 10, "october" to 10,
-            "nov" to 11, "november" to 11,
-            "dec" to 12, "december" to 12
+            "jan" to 1, "january" to 1, "जनवरी" to 1,
+            "feb" to 2, "february" to 2, "फरवरी" to 2,
+            "mar" to 3, "march" to 3, "मार्च" to 3,
+            "apr" to 4, "april" to 4, "अप्रैल" to 4,
+            "may" to 5, "मई" to 5,
+            "jun" to 6, "june" to 6, "जून" to 6,
+            "jul" to 7, "july" to 7, "जुलाई" to 7,
+            "aug" to 8, "august" to 8, "अगस्त" to 8,
+            "sep" to 9, "sept" to 9, "september" to 9, "सितंबर" to 9, "सितम्बर" to 9,
+            "oct" to 10, "october" to 10, "अक्टूबर" to 10, "अक्तूबर" to 10,
+            "nov" to 11, "november" to 11, "नवंबर" to 11, "नवम्बर" to 11,
+            "dec" to 12, "december" to 12, "दिसंबर" to 12, "दिसम्बर" to 12
         )
 
-        val explicitDate1 = Regex("(?i)\\b\\(?\\s*(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\\b\\s*\\)?").find(lower)
-        val explicitDate2 = Regex("(?i)\\b\\(?\\s*(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b\\s*\\)?").find(lower)
-        val explicitDateNumeric = Regex("\\b(\\d{1,2})/(\\d{1,2})(?:/(\\d{2,4}))?\\b").find(lower)
+        val monthNamesPattern = "jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|" +
+                "जनवरी|फरवरी|मार्च|अप्रैल|मई|जून|जुलाई|अगस्त|सितंबर|सितम्बर|अक्टूबर|अक्तूबर|नवंबर|नवम्बर|दिसंबर|दिसम्बर"
+
+        val explicitDate1 = Regex("(?i)\\b\\(?\\s*(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?($monthNamesPattern)\\b\\s*\\)?").find(lower)
+        val explicitDate2 = Regex("(?i)\\b\\(?\\s*($monthNamesPattern)\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b\\s*\\)?").find(lower)
+        val explicitDateSlash = Regex("(?<![:\\d])\\b(\\d{1,2})/(\\d{1,2})(?:/(\\d{2,4}))?\\b(?![:\\d]|(?:\\s*(?:am|pm|baje|बजे)))").find(lower)
+        val explicitDateDot = Regex("(?<![:\\d])\\b(\\d{1,2})\\.(\\d{1,2})(?:\\.(\\d{2,4}))?\\b(?![:\\d]|(?:\\s*(?:am|pm|baje|बजे)))").find(lower)
+        val explicitDateDashWithYear = Regex("(?<![:\\d])\\b(\\d{1,2})-(\\d{1,2})-(\\d{2,4})\\b(?![:\\d])").find(lower)
+        val explicitDateDashTwo = Regex("(?<![:\\d])\\b(\\d{1,2})-(\\d{1,2})\\b(?![:\\d]|(?:\\s*(?:am|pm|baje|बजे)))").find(lower)
+
+        var explicitYearSpecified = false
 
         if (explicitDate1 != null) {
             hasExplicitDate = true
@@ -138,19 +146,64 @@ class ScheduleParser(
             explicitMonth = monthNamesMap[explicitDate2.groupValues[1].lowercase()] ?: refMonth
             explicitDay = explicitDate2.groupValues[2].toInt()
             hasDayMention = true
-        } else if (explicitDateNumeric != null) {
-            val d = explicitDateNumeric.groupValues[1].toInt()
-            val m = explicitDateNumeric.groupValues[2].toInt()
+        } else if (explicitDateSlash != null) {
+            val d = explicitDateSlash.groupValues[1].toInt()
+            val m = explicitDateSlash.groupValues[2].toInt()
             if (d in 1..31 && m in 1..12) {
                 hasExplicitDate = true
                 explicitDay = d
                 explicitMonth = m
-                val yStr = explicitDateNumeric.groupValues.getOrNull(3)
+                val yStr = explicitDateSlash.groupValues.getOrNull(3)
                 if (!yStr.isNullOrBlank()) {
                     val y = yStr.toInt()
                     explicitYear = if (y < 100) 2000 + y else y
+                    explicitYearSpecified = true
                 }
                 hasDayMention = true
+            }
+        } else if (explicitDateDot != null) {
+            val d = explicitDateDot.groupValues[1].toInt()
+            val m = explicitDateDot.groupValues[2].toInt()
+            if (d in 1..31 && m in 1..12) {
+                hasExplicitDate = true
+                explicitDay = d
+                explicitMonth = m
+                val yStr = explicitDateDot.groupValues.getOrNull(3)
+                if (!yStr.isNullOrBlank()) {
+                    val y = yStr.toInt()
+                    explicitYear = if (y < 100) 2000 + y else y
+                    explicitYearSpecified = true
+                }
+                hasDayMention = true
+            }
+        } else if (explicitDateDashWithYear != null) {
+            val d = explicitDateDashWithYear.groupValues[1].toInt()
+            val m = explicitDateDashWithYear.groupValues[2].toInt()
+            if (d in 1..31 && m in 1..12) {
+                hasExplicitDate = true
+                explicitDay = d
+                explicitMonth = m
+                val y = explicitDateDashWithYear.groupValues[3].toInt()
+                explicitYear = if (y < 100) 2000 + y else y
+                explicitYearSpecified = true
+                hasDayMention = true
+            }
+        } else if (explicitDateDashTwo != null) {
+            val d = explicitDateDashTwo.groupValues[1].toInt()
+            val m = explicitDateDashTwo.groupValues[2].toInt()
+            if (d in 13..31 && m in 1..12) {
+                hasExplicitDate = true
+                explicitDay = d
+                explicitMonth = m
+                hasDayMention = true
+            }
+        }
+
+        // Year Rollover: If no year was explicitly stated and the date is earlier in the calendar than ref, roll over to next year
+        if (hasExplicitDate && !explicitYearSpecified) {
+            val isEarlierInCalendar = (explicitMonth < refMonth) || (explicitMonth == refMonth && explicitDay < refDay)
+            if (isEarlierInCalendar) {
+                explicitYear = refYear + 1
             }
         }
 
@@ -299,6 +352,8 @@ class ScheduleParser(
             val ampmMatch = Regex("(?i)\\b(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)\\b").find(lower)
             val atMatch = Regex("(?i)\\bat\\s+(\\d{1,2})(?::(\\d{2}))?(?:\\s*(am|pm))?\\b").find(lower)
             val exact24Match = Regex("\\b([01]?\\d|2[0-3]):([0-5]\\d)\\b").find(lower)
+            val noonMatch = Regex("(?i)\\b(?:at\\s+)?(?:12\\s*)?noon\\b").find(lower)
+            val midnightMatch = Regex("(?i)\\b(?:at\\s+)?(?:12\\s*)?midnight\\b").find(lower)
 
             if (bajeMatch != null) {
                 val daypart = bajeMatch.groupValues[1].lowercase()
@@ -339,6 +394,12 @@ class ScheduleParser(
                 if (meridiem == "pm" && rawH < 12) rawH += 12
                 if (meridiem == "am" && rawH == 12) rawH = 0
                 hour = rawH
+            } else if (noonMatch != null) {
+                hour = 12
+                minute = 0
+            } else if (midnightMatch != null) {
+                hour = 0
+                minute = 0
             } else if (atMatch != null) {
                 var rawH = atMatch.groupValues[1].toInt()
                 minute = atMatch.groupValues[2].toIntOrNull() ?: 0
@@ -435,9 +496,28 @@ class ScheduleParser(
         if (!timeUnspecified && hour != null) {
             startIso = String.format(Locale.US, "%sT%02d:%02d:00+05:30", startDateStr, hour, minute)
         }
+        var endDateStr = startDateStr
+        if (!timeUnspecified && hour != null && endHour != null) {
+            val isEndNextDay = (endHour < hour) || (endHour == hour && endMinute < minute)
+            if (isEndNextDay) {
+                val endCal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+                    set(Calendar.YEAR, targetYear)
+                    set(Calendar.MONTH, targetMonth - 1)
+                    set(Calendar.DAY_OF_MONTH, targetDay)
+                    add(Calendar.DAY_OF_MONTH, 1)
+                }
+                endDateStr = String.format(
+                    Locale.US,
+                    "%04d-%02d-%02d",
+                    endCal.get(Calendar.YEAR),
+                    endCal.get(Calendar.MONTH) + 1,
+                    endCal.get(Calendar.DAY_OF_MONTH)
+                )
+            }
+        }
         var endIso: String? = null
         if (!timeUnspecified && endHour != null) {
-            endIso = String.format(Locale.US, "%sT%02d:%02d:00+05:30", startDateStr, endHour, endMinute)
+            endIso = String.format(Locale.US, "%sT%02d:%02d:00+05:30", endDateStr, endHour, endMinute)
         }
 
         // 5. Subject / Title Extraction
