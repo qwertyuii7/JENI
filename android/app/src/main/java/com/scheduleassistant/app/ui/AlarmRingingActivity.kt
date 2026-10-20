@@ -137,7 +137,7 @@ fun AlarmRingingContent(
 
     Surface(
         modifier = Modifier.fillMaxSize(),
-        color = Color(0xFF0F172A)
+        color = Color(0xFF09090B)
     ) {
         Column(
             modifier = Modifier
@@ -153,7 +153,7 @@ fun AlarmRingingContent(
                 Box(
                     modifier = Modifier
                         .size(80.dp)
-                        .background(Color(0xFFDC2626).copy(alpha = 0.2f), CircleShape),
+                        .background(Color(0xFFEF4444).copy(alpha = 0.15f), CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
                     Text("⏰", fontSize = 40.sp)
@@ -165,7 +165,7 @@ fun AlarmRingingContent(
                     text = currentTime,
                     fontSize = 44.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Color.White
+                    color = Color(0xFFFAFAFA)
                 )
 
                 if (activeAlarms.size > 1) {
@@ -174,7 +174,7 @@ fun AlarmRingingContent(
                         text = "${activeAlarms.size} ALARMS ACTIVE",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
-                        color = Color(0xFFFBBF24),
+                        color = Color(0xFFF59E0B),
                         letterSpacing = 1.sp
                     )
                 }
@@ -191,7 +191,7 @@ fun AlarmRingingContent(
                 items(activeAlarms, key = { it.entityId }) { alarm ->
                     Card(
                         modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF18181B)),
                         shape = RoundedCornerShape(16.dp)
                     ) {
                         Row(
@@ -214,12 +214,12 @@ fun AlarmRingingContent(
                                     text = alarm.title,
                                     fontSize = 18.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = Color.White
+                                    color = Color(0xFFFAFAFA)
                                 )
                                 Text(
                                     text = "ID: ${alarm.entityId.take(16)}...",
                                     fontSize = 11.sp,
-                                    color = Color(0xFF94A3B8)
+                                    color = Color(0xFFA1A1AA)
                                 )
                             }
 
@@ -227,10 +227,10 @@ fun AlarmRingingContent(
 
                             Button(
                                 onClick = { onDismissAlarm(alarm.entityId) },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
                                 shape = RoundedCornerShape(12.dp)
                             ) {
-                                Text("Dismiss", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                Text("Dismiss", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
                             }
                         }
                     }
@@ -250,7 +250,7 @@ fun AlarmRingingContent(
                         .fillMaxWidth()
                         .height(56.dp),
                     shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444))
                 ) {
                     Text(
                         if (activeAlarms.size > 1) "DISMISS ALL ALARMS" else "DISMISS ALARM",
@@ -266,7 +266,7 @@ fun AlarmRingingContent(
                         .fillMaxWidth()
                         .height(50.dp),
                     shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFAFAFA))
                 ) {
                     Text("Snooze (+5 min)", fontSize = 15.sp, fontWeight = FontWeight.Medium)
                 }

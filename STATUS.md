@@ -24,6 +24,16 @@
   - Bug 5 (Devanagari Month Names): Added Hindi month names (जनवरी through दिसम्बर) in `monthNamesMap` and `monthNamesPattern`.
   - Bug 6 (IngestionPipeline Projection Integrity): Replaced custom, incomplete event projection loop in `IngestionPipeline` with unified `ProjectionEngine.projectState(eventStore).schedules`, ensuring deleted schedules (`ScheduleStatus.DELETED` / `sched.deleted`) are not matched during entity candidate resolution.
 
+- Sleek, Dark, Minimal UI/UX Transformation & Design System:
+  - Created Obsidian & Zinc design system in [Color.kt](file:///c:/prompts/ai_agent/android/app/src/main/java/com/scheduleassistant/app/ui/theme/Color.kt) and [Theme.kt](file:///c:/prompts/ai_agent/android/app/src/main/java/com/scheduleassistant/app/ui/theme/Theme.kt): Primary Dark (`#09090B`), Surface (`#111114`), Elevated Cards (`#18181B`), Subtle Borders (`#27272A`), Indigo Accent (`#6366F1`), Sky Cyan (`#38BDF8`), Emerald Success (`#10B981`), Amber Warning (`#F59E0B`), Rose Danger (`#EF4444`).
+  - Created reusable design system component library in [AppComponents.kt](file:///c:/prompts/ai_agent/android/app/src/main/java/com/scheduleassistant/app/ui/components/AppComponents.kt): `AppTopHeader`, `SleekCard`, `MetricGlanceCard`, `StatusPill`, `SectionHeader`, `SleekPrimaryButton`, `SleekOutlinedButton`, `SleekDangerButton`, `EmptyStateView`, and discreet `AttributionMark`.
+  - Minimal modern geometric brand identity & Android adaptive icons: [ic_launcher.xml](file:///c:/prompts/ai_agent/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml), [ic_launcher_round.xml](file:///c:/prompts/ai_agent/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml), [ic_launcher_foreground.xml](file:///c:/prompts/ai_agent/android/app/src/main/res/drawable/ic_launcher_foreground.xml), [ic_launcher_background.xml](file:///c:/prompts/ai_agent/android/app/src/main/res/drawable/ic_launcher_background.xml), [ic_launcher_monochrome.xml](file:///c:/prompts/ai_agent/android/app/src/main/res/drawable/ic_launcher_monochrome.xml), and [ic_logo_brand.xml](file:///c:/prompts/ai_agent/android/app/src/main/res/drawable/ic_logo_brand.xml).
+  - Modernized all screens in [Screens.kt](file:///c:/prompts/ai_agent/android/app/src/main/java/com/scheduleassistant/app/ui/screens/Screens.kt), [MainActivity.kt](file:///c:/prompts/ai_agent/android/app/src/main/java/com/scheduleassistant/app/ui/MainActivity.kt), and [AlarmRingingActivity.kt](file:///c:/prompts/ai_agent/android/app/src/main/java/com/scheduleassistant/app/ui/AlarmRingingActivity.kt).
+  - Implemented hidden 5-tap Developer Mode in [DeveloperModeManager.kt](file:///c:/prompts/ai_agent/android/app/src/main/java/com/scheduleassistant/app/data/diagnostics/DeveloperModeManager.kt) triggered via `Settings -> About Application -> App Version` (hints at taps 3 & 4, activation at tap 5, persisted via SharedPreferences, manual deactivation toggle).
+  - Built comprehensive diagnostic [DeveloperDashboardScreen.kt](file:///c:/prompts/ai_agent/android/app/src/main/java/com/scheduleassistant/app/ui/screens/DeveloperDashboardScreen.kt) covering Subsystem Health (Room, Listener, Exact Alarms, Battery Optimization, Sync Store), Real-time Diagnostic Log Viewer (search, filter, copy, clear), Synthetic Message Injector & Triage Evaluator, and Utilities (Test Notification dispatch, Anonymized Soak Report Export).
+  - Placed discreet, elegant attribution marking: `Developed by Qwrtystds.`.
+  - Added unit test suite [DeveloperModeTest.kt](file:///c:/prompts/ai_agent/android/app/src/test/java/com/scheduleassistant/app/DeveloperModeTest.kt) verifying the 5-tap sequence, step hints, activation, and manual deactivation.
+
 ### In Progress
 - Owner labeling 100 real messages and establishing the 40-message holdout file.
 - Soak 1 running on owner's Samsung Galaxy A15 5G (Log-only mode, WhatsApp Web closed).
@@ -32,9 +42,9 @@
 - None.
 
 ### Test Counts (HTML Reports)
-- **Android JVM Unit Tests**: 65 passed, 0 failures across 14 test classes ([index.html](file:///c:/prompts/ai_agent/android/app/build/reports/tests/testDebugUnitTest/index.html)).
+- **Android JVM Unit Tests**: 67 passed, 0 failures across 15 test classes ([index.html](file:///c:/prompts/ai_agent/android/app/build/reports/tests/testDebugUnitTest/index.html)).
 - **Vitest Suites**: 69 passed, 0 failures across 17 test files (`spec`: 14, `core`: 22, `laptop`: 33).
-- **Total Monorepo Tests**: 134 passed, 0 failures (100% success rate).
+- **Total Monorepo Tests**: 136 passed, 0 failures (100% success rate).
 - **Architecture Boundary**: Verified pure Kotlin in `domain/` with 0 `android.*` imports.
 - **APK Size**: 17.3 MB (18,132,450 bytes) at `C:\Users\samsung\Downloads\ScheduleAssistant-debug.apk` (No installs on Day 2).
 

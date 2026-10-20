@@ -9,12 +9,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Inbox
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Terminal
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import com.scheduleassistant.app.data.diagnostics.DeveloperModeManager
 import com.scheduleassistant.app.data.diagnostics.DiagnosticsManager
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -36,9 +39,7 @@ import com.scheduleassistant.app.engine.ScheduleParser
 import com.scheduleassistant.app.engine.SpecLoader
 import com.scheduleassistant.app.service.AlarmScheduler
 import com.scheduleassistant.app.ui.screens.*
-import com.scheduleassistant.app.ui.theme.DarkBg
-import com.scheduleassistant.app.ui.theme.Primary
-import com.scheduleassistant.app.ui.theme.ScheduleAssistantTheme
+import com.scheduleassistant.app.ui.theme.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -53,8 +54,8 @@ enum class AppTab(val title: String) {
     HOME("Home"),
     PENDING("Pending"),
     ALERTS("Alerts"),
-    DEBUG("Debug"),
-    SETTINGS("Settings")
+    SETTINGS("Settings"),
+    DEV_CONSOLE("Developer")
 }
 
 fun SyncEventEntity.toSyncEvent(): SyncEvent {
@@ -185,6 +186,10 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        var isDeveloperMode by remember {
+            mutableStateOf(DeveloperModeManager.isDeveloperModeEnabled(applicationContext))
+        }
+
         Scaffold(
             snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
@@ -197,7 +202,11 @@ class MainActivity : ComponentActivity() {
                         onClick = { currentTab = AppTab.HOME },
                         icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
                         label = { Text("Home") },
-                        colors = NavigationBarItemDefaults.colors(selectedIconColor = Primary, selectedTextColor = Primary)
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = Primary,
+                            selectedTextColor = Primary,
+                            indicatorColor = CardElevated
+                        )
                     )
                     NavigationBarItem(
                         selected = currentTab == AppTab.PENDING,
@@ -206,37 +215,55 @@ class MainActivity : ComponentActivity() {
                             BadgedBox(
                                 badge = {
                                     if (pendingCount > 0) {
-                                        Badge { Text("$pendingCount") }
+                                        Badge(containerColor = Primary) { Text("$pendingCount", color = TextLight) }
                                     }
                                 }
                             ) {
-                                Icon(Icons.Default.List, contentDescription = "Pending")
+                                Icon(Icons.Default.Inbox, contentDescription = "Pending")
                             }
                         },
                         label = { Text("Pending") },
-                        colors = NavigationBarItemDefaults.colors(selectedIconColor = Primary, selectedTextColor = Primary)
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = Primary,
+                            selectedTextColor = Primary,
+                            indicatorColor = CardElevated
+                        )
                     )
                     NavigationBarItem(
                         selected = currentTab == AppTab.ALERTS,
                         onClick = { currentTab = AppTab.ALERTS },
                         icon = { Icon(Icons.Default.Notifications, contentDescription = "Alerts") },
                         label = { Text("Alerts") },
-                        colors = NavigationBarItemDefaults.colors(selectedIconColor = Primary, selectedTextColor = Primary)
-                    )
-                    NavigationBarItem(
-                        selected = currentTab == AppTab.DEBUG,
-                        onClick = { currentTab = AppTab.DEBUG },
-                        icon = { Icon(Icons.Default.BugReport, contentDescription = "Debug") },
-                        label = { Text("Debug") },
-                        colors = NavigationBarItemDefaults.colors(selectedIconColor = Primary, selectedTextColor = Primary)
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = Primary,
+                            selectedTextColor = Primary,
+                            indicatorColor = CardElevated
+                        )
                     )
                     NavigationBarItem(
                         selected = currentTab == AppTab.SETTINGS,
                         onClick = { currentTab = AppTab.SETTINGS },
-                        icon = { Icon(Icons.Default.Settings, contentDescription = "Diagnostics") },
-                        label = { Text("Diagnostics") },
-                        colors = NavigationBarItemDefaults.colors(selectedIconColor = Primary, selectedTextColor = Primary)
+                        icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
+                        label = { Text("Settings") },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = Primary,
+                            selectedTextColor = Primary,
+                            indicatorColor = CardElevated
+                        )
                     )
+                    if (isDeveloperMode) {
+                        NavigationBarItem(
+                            selected = currentTab == AppTab.DEV_CONSOLE,
+                            onClick = { currentTab = AppTab.DEV_CONSOLE },
+                            icon = { Icon(Icons.Default.Terminal, contentDescription = "Developer") },
+                            label = { Text("Developer") },
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = Accent,
+                                selectedTextColor = Accent,
+                                indicatorColor = CardElevated
+                            )
+                        )
+                    }
                 }
             }
         ) { paddingValues ->
@@ -251,7 +278,7 @@ class MainActivity : ComponentActivity() {
                         reminders = reminders,
                         isListenerConnected = isListenerConnected,
                         onNavigateToPending = { currentTab = AppTab.PENDING },
-                        onNavigateToDebug = { currentTab = AppTab.DEBUG },
+                        onNavigateToDebug = { currentTab = if (isDeveloperMode) AppTab.DEV_CONSOLE else AppTab.SETTINGS },
                         onDelete = onDeleteWithUndo,
                         onRestore = { id -> handleRestoreSchedule(id) },
                         onEdit = { id, title, start, alarm -> handleEditSchedule(id, title, start, alarm) }
@@ -274,24 +301,28 @@ class MainActivity : ComponentActivity() {
                         onRestore = { id -> handleRestoreSchedule(id) },
                         onEdit = { id, title, start, alarm -> handleEditSchedule(id, title, start, alarm) }
                     )
-                    AppTab.DEBUG -> DebugScreen(
-                        onInjectMessage = { text ->
-                            lifecycleScope.launch {
-                                val result = handleInjectMessage(text)
-                                lastExtracted = result
-                            }
-                        },
-                        lastExtracted = lastExtracted,
-                        events = syncEvents
-                    )
                     AppTab.SETTINGS -> SettingsScreen(
                         scheduledAlarmsCount = scheduledAlarmsCount,
+                        isDeveloperModeActive = isDeveloperMode,
+                        onDeveloperModeChanged = { isDeveloperMode = it },
+                        onNavigateToDevConsole = { currentTab = AppTab.DEV_CONSOLE },
                         onRequestNotificationPermission = {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                                 notificationPermissionLauncher.launch("android.permission.POST_NOTIFICATIONS")
                             }
                         },
                         onDeleteAllTestItems = { handleDeleteAllTestItems() }
+                    )
+                    AppTab.DEV_CONSOLE -> DeveloperDashboardScreen(
+                        onNavigateBack = { currentTab = AppTab.SETTINGS },
+                        syncEvents = syncEvents,
+                        onInjectMessage = { text ->
+                            lifecycleScope.launch {
+                                val result = handleInjectMessage(text)
+                                lastExtracted = result
+                            }
+                        },
+                        lastExtracted = lastExtracted
                     )
                 }
             }

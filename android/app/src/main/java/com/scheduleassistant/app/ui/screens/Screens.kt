@@ -34,6 +34,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -44,7 +45,11 @@ import com.scheduleassistant.app.data.model.ExtractionOutput
 import com.scheduleassistant.app.data.model.ScheduleEntity
 import com.scheduleassistant.app.data.model.ScheduleStatus
 import com.scheduleassistant.app.data.model.SyncEvent
+import com.scheduleassistant.app.data.diagnostics.DeveloperModeManager
+import com.scheduleassistant.app.data.diagnostics.DeveloperTapResult
+import com.scheduleassistant.app.ui.components.*
 import com.scheduleassistant.app.ui.theme.*
+import android.widget.Toast
 
 @Composable
 fun HomeScreen(
@@ -107,74 +112,85 @@ fun HomeScreen(
         )
     }
 
-    LazyColumn(
+    Column(
         modifier = Modifier
             .fillMaxSize()
             .background(DarkBg)
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        item {
-            Text(
-                text = "Schedule Assistant",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
-                color = TextLight
-            )
-            Text(
-                text = "Offline-First On-Device Engine (Asia/Kolkata)",
-                style = MaterialTheme.typography.bodyMedium,
-                color = TextMuted
-            )
-        }
+        AppTopHeader(
+            isListenerActive = isListenerConnected,
+            isLogOnly = isLogOnlyMode,
+            onStatusClick = onNavigateToDebug
+        )
 
-        // Persistent Log-Only Banner
-        if (isLogOnlyMode) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
             item {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0x33F59E0B)),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "Today's Overview",
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = TextLight,
+                    letterSpacing = (-0.5).sp
+                )
+                Text(
+                    text = "Offline On-Device Engine • Asia/Kolkata",
+                    fontSize = 13.sp,
+                    color = TextMuted
+                )
+            }
+
+            // Warning banners with sleek styling
+            if (isLogOnlyMode) {
+                item {
+                    SleekCard(
+                        backgroundColor = WarningBg,
+                        borderColor = Warning.copy(alpha = 0.4f),
+                        cornerRadius = 14
+                    ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Info, contentDescription = null, tint = Warning)
+                            Icon(Icons.Default.Info, contentDescription = null, tint = Warning, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("Log-only ON: no alerts will be created", color = Warning, fontWeight = FontWeight.Bold)
+                            Text("Log-Only Mode Active", color = Warning, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                         }
                         Spacer(Modifier.height(4.dp))
                         Text(
                             "Inbound WhatsApp messages will be analyzed and logged for diagnostics, but no alerts or alarms will be created.",
                             color = TextLight,
-                            fontSize = 13.sp
+                            fontSize = 12.sp,
+                            lineHeight = 16.sp
                         )
                     }
                 }
             }
-        }
 
-        // Full-Screen Intent Warning Banner
-        if (!canUseFsi) {
-            item {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0x33EF4444)),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
+            if (!canUseFsi) {
+                item {
+                    SleekCard(
+                        backgroundColor = DangerBg,
+                        borderColor = Danger.copy(alpha = 0.4f),
+                        cornerRadius = 14
+                    ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Warning, contentDescription = null, tint = Danger)
+                            Icon(Icons.Default.Warning, contentDescription = null, tint = Danger, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("Full-Screen Alarms Not Allowed", color = Danger, fontWeight = FontWeight.Bold)
+                            Text("Full-Screen Alarms Not Allowed", color = Danger, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                         }
                         Spacer(Modifier.height(4.dp))
                         Text(
                             "Android requires full-screen intent permission so alarms can wake the screen and display ringing UI over the lockscreen.",
                             color = TextLight,
-                            fontSize = 13.sp
+                            fontSize = 12.sp,
+                            lineHeight = 16.sp
                         )
-                        Spacer(Modifier.height(8.dp))
-                        Button(
+                        Spacer(Modifier.height(10.dp))
+                        SleekDangerButton(
+                            text = "Enable Full-Screen Intent",
                             onClick = {
                                 val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                                     Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
@@ -186,144 +202,140 @@ fun HomeScreen(
                                     }
                                 }
                                 context.startActivity(intent)
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Danger)
-                        ) {
-                            Text("Enable Full-Screen Intent", color = Color.White)
-                        }
+                            }
+                        )
                     }
                 }
             }
-        }
 
-        // Requirement 4: Visible warning when notification listener is down
-        if (!isListenerConnected) {
-            item {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0x33EF4444)),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
+            if (!isListenerConnected) {
+                item {
+                    SleekCard(
+                        backgroundColor = DangerBg,
+                        borderColor = Danger.copy(alpha = 0.4f),
+                        cornerRadius = 14
+                    ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Error, contentDescription = null, tint = Danger)
+                            Icon(Icons.Default.Error, contentDescription = null, tint = Danger, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("Notification Listener Disconnected", color = Danger, fontWeight = FontWeight.Bold)
+                            Text("Notification Listener Disconnected", color = Danger, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                         }
                         Spacer(Modifier.height(4.dp))
                         Text(
                             "Schedule Assistant is not receiving WhatsApp notifications. Listener service is inactive or unbound.",
                             color = TextLight,
-                            fontSize = 13.sp
+                            fontSize = 12.sp,
+                            lineHeight = 16.sp
                         )
-                        Spacer(Modifier.height(8.dp))
-                        Button(
+                        Spacer(Modifier.height(10.dp))
+                        SleekDangerButton(
+                            text = "Reconnect / Open Settings",
                             onClick = {
                                 context.startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Danger)
-                        ) {
-                            Text("Reconnect / Open Settings", color = Color.White)
-                        }
+                            }
+                        )
                     }
                 }
             }
-        }
 
-        // Battery Optimization Warning Banner
-        if (!isIgnoringBatteryOptimizations) {
-            item {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0x33F59E0B)),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
+            if (!isIgnoringBatteryOptimizations) {
+                item {
+                    SleekCard(
+                        backgroundColor = WarningBg,
+                        borderColor = Warning.copy(alpha = 0.4f),
+                        cornerRadius = 14
+                    ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Warning, contentDescription = null, tint = Warning)
+                            Icon(Icons.Default.Warning, contentDescription = null, tint = Warning, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("Background Optimization Warning", color = Warning, fontWeight = FontWeight.Bold)
+                            Text("Background Optimization Warning", color = Warning, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                         }
                         Spacer(Modifier.height(4.dp))
                         Text(
                             "Android may kill notification listener in background. Exclude this app from battery optimization.",
                             color = TextLight,
-                            fontSize = 13.sp
+                            fontSize = 12.sp,
+                            lineHeight = 16.sp
                         )
-                        Spacer(Modifier.height(8.dp))
-                        Button(
+                        Spacer(Modifier.height(10.dp))
+                        SleekOutlinedButton(
+                            text = "Disable Optimization",
+                            borderColor = Warning,
+                            contentColor = Warning,
                             onClick = {
                                 val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
                                     data = Uri.parse("package:${context.packageName}")
                                 }
                                 context.startActivity(intent)
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Warning)
-                        ) {
-                            Text("Disable Optimization", color = Color.Black)
-                        }
+                            }
+                        )
                     }
                 }
             }
-        }
 
-        // Stat Cards
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Card(
-                    modifier = Modifier.weight(1f).clickable { onNavigateToPending() },
-                    colors = CardDefaults.cardColors(containerColor = CardBg),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text("Pending Review", color = TextMuted, fontSize = 12.sp)
-                        Text("$pendingCount", color = Warning, fontSize = 28.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-
-                Card(
-                    modifier = Modifier.weight(1f),
-                    colors = CardDefaults.cardColors(containerColor = CardBg),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text("Confirmed", color = TextMuted, fontSize = 12.sp)
-                        Text("$confirmedCount", color = Success, fontSize = 28.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-        }
-
-        item {
-            Text(
-                text = "Today's Schedule",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = TextLight
-            )
-        }
-
-        val todayConfirmed = schedules.filter { it.status == ScheduleStatus.CONFIRMED }
-        if (todayConfirmed.isEmpty()) {
+            // Stat Glance Cards
             item {
-                Box(
-                    modifier = Modifier.fillMaxWidth().padding(32.dp),
-                    contentAlignment = Alignment.Center
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text("No schedules confirmed yet. Use Debug screen to test notification ingestion.", color = TextMuted)
+                    MetricGlanceCard(
+                        title = "Pending",
+                        value = "$pendingCount",
+                        subtitle = if (pendingCount > 0) "Needs triage" else "All caught up",
+                        icon = Icons.Default.Inbox,
+                        iconTint = if (pendingCount > 0) Warning else Primary,
+                        modifier = Modifier.weight(1f),
+                        onClick = onNavigateToPending
+                    )
+
+                    MetricGlanceCard(
+                        title = "Confirmed",
+                        value = "$confirmedCount",
+                        subtitle = "Active events",
+                        icon = Icons.Default.CheckCircle,
+                        iconTint = Success,
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    val armedAlarmsCount = reminders.count { it.status.name == "SCHEDULED" }
+                    MetricGlanceCard(
+                        title = "Alarms",
+                        value = "$armedAlarmsCount",
+                        subtitle = "Exact alarms",
+                        icon = Icons.Default.Alarm,
+                        iconTint = Accent,
+                        modifier = Modifier.weight(1f)
+                    )
                 }
             }
-        } else {
-            items(todayConfirmed, key = { it.id }) { item ->
-                ConfirmedScheduleCard(
-                    item = item,
-                    reminders = reminders,
-                    onDelete = onDelete,
-                    onEdit = onEdit
-                )
+
+            item {
+                SectionHeader(title = "Today's Agenda")
+            }
+
+            val todayConfirmed = schedules.filter { it.status == ScheduleStatus.CONFIRMED }
+            if (todayConfirmed.isEmpty()) {
+                item {
+                    EmptyStateView(
+                        title = "Your Agenda is Clear",
+                        description = "No schedules confirmed yet. Inbound WhatsApp messages will be analyzed offline and queued for review.",
+                        icon = Icons.Default.EventAvailable
+                    )
+                }
+            } else {
+                items(todayConfirmed, key = { it.id }) { item ->
+                    ConfirmedScheduleCard(
+                        item = item,
+                        reminders = reminders,
+                        onDelete = onDelete,
+                        onEdit = onEdit
+                    )
+                }
+            }
+
+            item {
+                Spacer(Modifier.height(16.dp))
             }
         }
     }
@@ -922,25 +934,21 @@ fun PendingScreen(
         item {
             Text(
                 text = "Pending Review Queue",
-                style = MaterialTheme.typography.headlineMedium,
+                fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
-                color = TextLight
+                color = TextLight,
+                letterSpacing = (-0.5).sp
             )
             Text(
                 text = "One-tap confirm or choose alternate AM/PM reading. Reminder by default; alarm opt-in.",
-                style = MaterialTheme.typography.bodyMedium,
+                fontSize = 13.sp,
                 color = TextMuted
             )
         }
 
         if (normalPending.isNotEmpty()) {
             item {
-                Text(
-                    text = "Pending Confirmations (${normalPending.size})",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Accent
-                )
+                SectionHeader(title = "Pending Confirmations (${normalPending.size})")
             }
             items(normalPending, key = { it.id }) { item ->
                 PendingItemCard(
@@ -952,9 +960,11 @@ fun PendingScreen(
             }
         } else if (maybeList.isEmpty()) {
             item {
-                Box(modifier = Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) {
-                    Text("No items waiting for review.", color = TextMuted)
-                }
+                EmptyStateView(
+                    title = "All Caught Up",
+                    description = "No items waiting for review. New schedule proposals from WhatsApp notifications will appear here.",
+                    icon = Icons.Default.CheckCircle
+                )
             }
         }
 
@@ -1027,26 +1037,25 @@ fun AlertsScreen(
         item {
             Text(
                 text = "Alarms & Reminders",
-                style = MaterialTheme.typography.headlineMedium,
+                fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
-                color = TextLight
+                color = TextLight,
+                letterSpacing = (-0.5).sp
             )
             Text(
                 text = "Exact AlarmManager.setAlarmClock alerts & System Clock alarms",
-                style = MaterialTheme.typography.bodyMedium,
+                fontSize = 13.sp,
                 color = TextMuted
             )
-            Spacer(Modifier.height(8.dp))
-            Button(
+            Spacer(Modifier.height(10.dp))
+            SleekDangerButton(
+                text = "Stop All Ringing Alarms",
+                icon = Icons.Default.Cancel,
                 onClick = {
                     com.scheduleassistant.app.service.AlarmRingingService.stopAll(context)
                 },
-                colors = ButtonDefaults.buttonColors(containerColor = Danger),
-                shape = RoundedCornerShape(10.dp),
                 modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("🛑 Stop all alarms", color = Color.White, fontWeight = FontWeight.Bold)
-            }
+            )
         }
 
         // Requirement 4: Any confirmed item without a scheduled alert shows a red "no alert scheduled: <reason>" badge on Home/Alerts
@@ -2632,14 +2641,470 @@ fun DiagnosticsScreen(
 @Composable
 fun SettingsScreen(
     scheduledAlarmsCount: Int = 0,
+    isDeveloperModeActive: Boolean = false,
+    onDeveloperModeChanged: (Boolean) -> Unit = {},
+    onNavigateToDevConsole: () -> Unit = {},
     onRequestNotificationPermission: () -> Unit = {},
     onDeleteAllTestItems: () -> Unit = {}
 ) {
-    DiagnosticsScreen(
-        scheduledAlarmsCount = scheduledAlarmsCount,
-        onRequestNotificationPermission = onRequestNotificationPermission,
-        onDeleteAllTestItems = onDeleteAllTestItems
-    )
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    var isIgnoringBatteryOptimizations by remember {
+        mutableStateOf(powerManager.isIgnoringBatteryOptimizations(context.packageName))
+    }
+    var refreshTick by remember { mutableStateOf(0) }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                isIgnoringBatteryOptimizations = powerManager.isIgnoringBatteryOptimizations(context.packageName)
+                refreshTick++
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    val isListenerConnected by DiagnosticsManager.isListenerConnected.collectAsState()
+    var isLogOnlyMode by remember { mutableStateOf(DiagnosticsManager.isLogOnlyMode(context)) }
+    var captureAllChats by remember(refreshTick) { mutableStateOf(DiagnosticsManager.isCaptureAllChats(context)) }
+    val scheduler = remember { com.scheduleassistant.app.service.AlarmScheduler(context) }
+    val canScheduleExactAlarms = remember(refreshTick) { scheduler.canScheduleExactAlarms() }
+    val canUseFullScreen = remember(refreshTick) { DiagnosticsManager.canUseFullScreenIntent(context) }
+    val isListenerAccessGranted = NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
+
+    var isExporting by remember { mutableStateOf(false) }
+    var showBulkDeleteConfirmDialog by remember { mutableStateOf(false) }
+
+    if (showBulkDeleteConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showBulkDeleteConfirmDialog = false },
+            title = { Text("Delete All Test Items?", color = TextLight, fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "This will tombstone all test items and cancel their alarms and reminders. This action appends delete events and cannot be undone.",
+                    color = TextMuted,
+                    fontSize = 14.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showBulkDeleteConfirmDialog = false
+                        onDeleteAllTestItems()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Danger)
+                ) {
+                    Text("Delete All Test Items", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBulkDeleteConfirmDialog = false }) {
+                    Text("Cancel", color = TextMuted)
+                }
+            },
+            containerColor = CardBg
+        )
+    }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(DarkBg)
+            .padding(horizontal = 20.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        item {
+            Text(
+                text = "Settings & Preferences",
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Bold,
+                color = TextLight,
+                letterSpacing = (-0.5).sp
+            )
+            Text(
+                text = "Autonomous secretary configuration & device permissions",
+                fontSize = 13.sp,
+                color = TextMuted
+            )
+        }
+
+        // Section: Operating Mode
+        item {
+            SectionHeader(title = "Operating Mode")
+            SleekCard {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Log-Only Mode", color = TextLight, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            "Evaluates and logs messages without firing audible alarms. Recommended during soak audit.",
+                            color = TextMuted,
+                            fontSize = 12.sp,
+                            lineHeight = 16.sp
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Switch(
+                        checked = isLogOnlyMode,
+                        onCheckedChange = { checked ->
+                            DiagnosticsManager.setLogOnlyMode(context, checked)
+                            isLogOnlyMode = checked
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = TextLight,
+                            checkedTrackColor = Accent,
+                            uncheckedTrackColor = CardElevated
+                        )
+                    )
+                }
+
+                HorizontalDivider(color = CardBorderSubtle, thickness = 1.dp, modifier = Modifier.padding(vertical = 12.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Capture All WhatsApp Chats", color = TextLight, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            "When enabled, evaluates all WhatsApp chats instead of only allowlisted contacts.",
+                            color = TextMuted,
+                            fontSize = 12.sp,
+                            lineHeight = 16.sp
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Switch(
+                        checked = captureAllChats,
+                        onCheckedChange = { checked ->
+                            DiagnosticsManager.setCaptureAllChats(context, checked)
+                            captureAllChats = checked
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = TextLight,
+                            checkedTrackColor = Primary,
+                            uncheckedTrackColor = CardElevated
+                        )
+                    )
+                }
+            }
+        }
+
+        // Section: System Permissions & Services
+        item {
+            SectionHeader(title = "System Permissions & Background Engine")
+            SleekCard {
+                // 1. Notification Listener Access
+                PermissionRow(
+                    title = "Notification Listener Access",
+                    subtitle = if (isListenerConnected) "Connected & listening to WhatsApp" else "Permission required to intercept schedules",
+                    isGranted = isListenerAccessGranted && isListenerConnected,
+                    grantedLabel = "CONNECTED",
+                    deniedLabel = "SETUP",
+                    onAction = {
+                        context.startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
+                    }
+                )
+
+                HorizontalDivider(color = CardBorderSubtle, thickness = 1.dp, modifier = Modifier.padding(vertical = 10.dp))
+
+                // 2. Exact Alarms
+                PermissionRow(
+                    title = "Exact Alarm Scheduling",
+                    subtitle = "Required to ring alarms at the precise second (AlarmClock API)",
+                    isGranted = canScheduleExactAlarms,
+                    grantedLabel = "ALLOWED",
+                    deniedLabel = "GRANT",
+                    onAction = {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                                data = Uri.parse("package:${context.packageName}")
+                            }
+                            context.startActivity(intent)
+                        }
+                    }
+                )
+
+                HorizontalDivider(color = CardBorderSubtle, thickness = 1.dp, modifier = Modifier.padding(vertical = 10.dp))
+
+                // 3. Battery Optimization
+                PermissionRow(
+                    title = "Battery Optimization Exemption",
+                    subtitle = if (isIgnoringBatteryOptimizations) "Exempted — background survival protected" else "System may terminate background listener",
+                    isGranted = isIgnoringBatteryOptimizations,
+                    grantedLabel = "EXEMPTED",
+                    deniedLabel = "EXEMPT",
+                    onAction = {
+                        val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                            data = Uri.parse("package:${context.packageName}")
+                        }
+                        context.startActivity(intent)
+                    }
+                )
+
+                HorizontalDivider(color = CardBorderSubtle, thickness = 1.dp, modifier = Modifier.padding(vertical = 10.dp))
+
+                // 4. Full-Screen Alarms (FSI)
+                PermissionRow(
+                    title = "Full-Screen Alarms (Lock Screen)",
+                    subtitle = "Wakes screen and presents ringing interface over lockscreen",
+                    isGranted = canUseFullScreen,
+                    grantedLabel = "ALLOWED",
+                    deniedLabel = "SETUP",
+                    onAction = {
+                        val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                            Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
+                                data = Uri.parse("package:${context.packageName}")
+                            }
+                        } else {
+                            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                data = Uri.parse("package:${context.packageName}")
+                            }
+                        }
+                        context.startActivity(intent)
+                    }
+                )
+            }
+        }
+
+        // Section: Developer Options (Revealed when unlocked via 5 taps)
+        if (isDeveloperModeActive) {
+            item {
+                SectionHeader(title = "Developer Options")
+                SleekCard(
+                    borderColor = Accent.copy(alpha = 0.5f),
+                    backgroundColor = CardBg
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text("Developer Console", color = TextLight, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                                StatusPill(text = "UNLOCKED", color = Accent)
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "Deep hardware diagnostics, SQLite health, live searchable log viewer, and synthetic message injector.",
+                                color = TextMuted,
+                                fontSize = 12.sp,
+                                lineHeight = 16.sp
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.height(14.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        SleekPrimaryButton(
+                            text = "Open Console",
+                            icon = Icons.Default.Terminal,
+                            onClick = onNavigateToDevConsole,
+                            containerColor = Accent,
+                            contentColor = Color.Black,
+                            modifier = Modifier.weight(1f)
+                        )
+                        SleekOutlinedButton(
+                            text = "Deactivate",
+                            onClick = {
+                                DeveloperModeManager.setDeveloperModeEnabled(context, false)
+                                onDeveloperModeChanged(false)
+                                Toast.makeText(context, "Developer Mode deactivated", Toast.LENGTH_SHORT).show()
+                            }
+                        )
+                    }
+                }
+            }
+        }
+
+        // Section: Diagnostic Data & Actions
+        item {
+            SectionHeader(title = "Diagnostic Actions")
+            SleekCard {
+                SleekOutlinedButton(
+                    text = if (isExporting) "Generating Soak Log..." else "Export Anonymized Diagnostic Log",
+                    icon = Icons.Default.Share,
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = {
+                        coroutineScope.launch {
+                            isExporting = true
+                            try {
+                                val file = DiagnosticsManager.exportAnonymizedLogsToFile(context)
+                                DiagnosticsManager.shareExportFile(context, file)
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "Export error: ${e.message}", Toast.LENGTH_LONG).show()
+                            } finally {
+                                isExporting = false
+                            }
+                        }
+                    }
+                )
+
+                Spacer(Modifier.height(10.dp))
+
+                SleekDangerButton(
+                    text = "Delete All Test Items (Tombstone Cleanup)",
+                    icon = Icons.Default.DeleteSweep,
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = { showBulkDeleteConfirmDialog = true }
+                )
+            }
+        }
+
+        // Section: About Application (With 5-tap developer mode activation & user attribution)
+        item {
+            SectionHeader(title = "About Application")
+            SleekCard {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(CardElevated)
+                            .border(1.dp, CardBorder, RoundedCornerShape(10.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Schedule,
+                            contentDescription = null,
+                            tint = Primary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+
+                    Column {
+                        Text(
+                            text = "Schedule Assistant",
+                            color = TextLight,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Autonomous On-Device Secretary",
+                            color = TextMuted,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+
+                HorizontalDivider(color = CardBorderSubtle, thickness = 1.dp, modifier = Modifier.padding(vertical = 12.dp))
+
+                // App Version Row (5-Tap Activation Trigger)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable {
+                            val result = DeveloperModeManager.onVersionTap(context)
+                            when (result) {
+                                is DeveloperTapResult.Hint -> {
+                                    Toast.makeText(
+                                        context,
+                                        "You are ${result.stepsRemaining} steps away from Developer Mode.",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                                DeveloperTapResult.Activated -> {
+                                    Toast.makeText(
+                                        context,
+                                        "🎉 Developer Mode enabled! Developer Options unlocked.",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                    onDeveloperModeChanged(true)
+                                }
+                                DeveloperTapResult.AlreadyActive -> {
+                                    Toast.makeText(
+                                        context,
+                                        "Developer Mode is already active.",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                                DeveloperTapResult.Silent -> {}
+                            }
+                        }
+                        .padding(vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(text = "App Version", color = TextLight, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        Text(text = "Production Release", color = TextSubtle, fontSize = 11.sp)
+                    }
+                    Text(
+                        text = "0.1.0 (Build 98e2945)",
+                        color = PrimaryLight,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+
+                HorizontalDivider(color = CardBorderSubtle, thickness = 1.dp, modifier = Modifier.padding(vertical = 8.dp))
+
+                // Discreet, elegant attribution marking
+                AttributionMark()
+            }
+        }
+
+        item {
+            Spacer(Modifier.height(16.dp))
+        }
+    }
+}
+
+@Composable
+private fun PermissionRow(
+    title: String,
+    subtitle: String,
+    isGranted: Boolean,
+    grantedLabel: String,
+    deniedLabel: String,
+    onAction: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = title, color = TextLight, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(2.dp))
+            Text(text = subtitle, color = TextMuted, fontSize = 11.sp, lineHeight = 15.sp)
+        }
+        Spacer(Modifier.width(10.dp))
+        if (isGranted) {
+            StatusPill(text = grantedLabel, color = Success, backgroundColor = SuccessBg)
+        } else {
+            SleekOutlinedButton(
+                text = deniedLabel,
+                borderColor = Warning,
+                contentColor = Warning,
+                onClick = onAction
+            )
+        }
+    }
 }
 
 
