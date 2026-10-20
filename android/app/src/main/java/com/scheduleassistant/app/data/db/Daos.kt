@@ -136,6 +136,9 @@ interface AlarmAuditDao {
 
     @Query("SELECT * FROM alarm_audit_logs ORDER BY timestamp DESC")
     suspend fun getAllAudits(): List<AlarmAuditEntity>
+
+    @Query("DELETE FROM alarm_audit_logs")
+    suspend fun clearAllAudits()
 }
 
 @Dao

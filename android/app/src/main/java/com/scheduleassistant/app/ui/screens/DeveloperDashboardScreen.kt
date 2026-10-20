@@ -32,6 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationCompat
+import com.scheduleassistant.app.data.db.AlarmAuditEntity
 import com.scheduleassistant.app.data.db.AppDatabase
 import com.scheduleassistant.app.data.db.DiagnosticLogEntity
 import com.scheduleassistant.app.data.diagnostics.DeveloperModeManager
@@ -52,7 +53,8 @@ fun DeveloperDashboardScreen(
     onNavigateBack: () -> Unit,
     syncEvents: List<SyncEvent>,
     onInjectMessage: (String) -> Unit = {},
-    lastExtracted: ExtractionOutput? = null
+    lastExtracted: ExtractionOutput? = null,
+    onDeleteAllTestItems: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -202,6 +204,7 @@ fun DeveloperDashboardScreen(
                     val tabs = listOf(
                         "HEALTH" to "Health",
                         "LOGS" to "Logs",
+                        "AUDITS" to "Audits",
                         "INJECTOR" to "Injector",
                         "UTILITIES" to "Tools"
                     )
@@ -219,7 +222,7 @@ fun DeveloperDashboardScreen(
                             Text(
                                 text = label,
                                 color = if (isSelected) TextLight else TextMuted,
-                                fontSize = 12.sp,
+                                fontSize = 11.sp,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                             )
                         }
@@ -269,13 +272,15 @@ fun DeveloperDashboardScreen(
                         Toast.makeText(context, "Logs cleared", Toast.LENGTH_SHORT).show()
                     }
                 )
+                "AUDITS" -> AuditsSection(context = context)
                 "INJECTOR" -> InjectorSection(
                     onInjectMessage = onInjectMessage,
                     lastExtracted = lastExtracted
                 )
                 "UTILITIES" -> UtilitiesSection(
                     context = context,
-                    syncEvents = syncEvents
+                    syncEvents = syncEvents,
+                    onDeleteAllTestItems = onDeleteAllTestItems
                 )
             }
         }
@@ -670,12 +675,227 @@ private fun PresetChip(text: String, onClick: () -> Unit) {
 }
 
 @Composable
+private fun AuditsSection(context: Context) {
+    val coroutineScope = rememberCoroutineScope()
+    val db = remember { AppDatabase.getInstance(context) }
+    val scheduler = remember { AlarmScheduler(context) }
+    val auditsFlow = remember { db.alarmAuditDao().getRecentAuditsFlow(100) }
+    val audits by auditsFlow.collectAsState(initial = emptyList())
+    var auditFilter by remember { mutableStateOf("ALL") } // ALL, SUCCESS, FAILURE
+    var searchQuery by remember { mutableStateOf("") }
+    val canScheduleExact = remember { scheduler.canScheduleExactAlarms() }
+    val nextAlarmClock = remember { scheduler.getNextAlarmClockFormatted() }
+
+    val filteredAudits = audits.filter { audit ->
+        val matchesFilter = when (auditFilter) {
+            "SUCCESS" -> audit.result == "SUCCESS"
+            "FAILURE" -> audit.result != "SUCCESS"
+            else -> true
+        }
+        val matchesSearch = if (searchQuery.isBlank()) true else {
+            audit.api.contains(searchQuery, ignoreCase = true) ||
+            audit.entityId.contains(searchQuery, ignoreCase = true) ||
+            (audit.errorMessage?.contains(searchQuery, ignoreCase = true) == true)
+        }
+        matchesFilter && matchesSearch
+    }
+
+    LazyColumn(
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+        modifier = Modifier.fillMaxSize()
+    ) {
+        item {
+            SectionHeader(title = "Alarm Subsystem Telemetry")
+            SleekCard {
+                DiagnosticRow(label = "Exact Alarms Permission", value = if (canScheduleExact) "GRANTED (High Precision)" else "DENIED (Batched)")
+                DiagnosticRow(label = "Next OS Alarm Clock", value = nextAlarmClock, isLast = true)
+            }
+        }
+
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                SectionHeader(title = "Scheduling Audit Log (${audits.size} entries)")
+                if (audits.isNotEmpty()) {
+                    Text(
+                        text = "Clear Audits",
+                        color = Danger,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier
+                            .clickable {
+                                coroutineScope.launch(Dispatchers.IO) {
+                                    db.alarmAuditDao().clearAllAudits()
+                                }
+                                Toast.makeText(context, "Audit logs cleared", Toast.LENGTH_SHORT).show()
+                            }
+                            .padding(4.dp)
+                    )
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                listOf("ALL" to "All", "SUCCESS" to "Success", "FAILURE" to "Failed").forEach { (key, label) ->
+                    val isSel = auditFilter == key
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (isSel) Primary else CardBg)
+                            .border(1.dp, if (isSel) Primary else CardBorder, RoundedCornerShape(8.dp))
+                            .clickable { auditFilter = key }
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = label,
+                            color = if (isSel) Color.White else TextMuted,
+                            fontSize = 12.sp,
+                            fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                placeholder = { Text("Search by API, entity ID, or error...", color = TextMuted, fontSize = 12.sp) },
+                singleLine = true,
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = TextMuted, modifier = Modifier.size(16.dp)) },
+                modifier = Modifier.fillMaxWidth(),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = TextLight,
+                    unfocusedTextColor = TextLight,
+                    focusedBorderColor = Primary,
+                    unfocusedBorderColor = CardBorder,
+                    focusedContainerColor = CardBg,
+                    unfocusedContainerColor = CardBg
+                )
+            )
+        }
+
+        if (filteredAudits.isEmpty()) {
+            item {
+                EmptyStateView(
+                    title = "No Audits Found",
+                    description = if (audits.isEmpty()) "No scheduling attempts have been recorded yet." else "No audit entries match the current filter.",
+                    icon = Icons.Default.FactCheck
+                )
+            }
+        } else {
+            items(filteredAudits, key = { it.id }) { audit ->
+                SleekCard(
+                    borderColor = if (audit.result == "SUCCESS") CardBorderSubtle else Danger.copy(alpha = 0.5f)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = audit.api,
+                                color = TextLight,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                                fontFamily = FontFamily.Monospace
+                            )
+                            Text(
+                                text = "Entity: ${audit.entityId}",
+                                color = TextMuted,
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                        StatusPill(
+                            text = audit.result,
+                            color = if (audit.result == "SUCCESS") Success else Danger,
+                            backgroundColor = if (audit.result == "SUCCESS") SuccessBg else DangerBg
+                        )
+                    }
+
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = "Trigger: ${audit.triggerTime}",
+                        color = Accent,
+                        fontSize = 11.sp
+                    )
+                    Text(
+                        text = "Logged: ${audit.timestamp}",
+                        color = TextSubtle,
+                        fontSize = 10.sp
+                    )
+
+                    if (!audit.errorMessage.isNullOrBlank()) {
+                        Spacer(Modifier.height(8.dp))
+                        Surface(
+                            color = DangerBg,
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = audit.errorMessage,
+                                color = Danger,
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace,
+                                modifier = Modifier.padding(8.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun UtilitiesSection(
     context: Context,
-    syncEvents: List<SyncEvent>
+    syncEvents: List<SyncEvent>,
+    onDeleteAllTestItems: (() -> Unit)? = null
 ) {
     val coroutineScope = rememberCoroutineScope()
     var isExporting by remember { mutableStateOf(false) }
+    var showBulkDeleteConfirmDialog by remember { mutableStateOf(false) }
+
+    if (showBulkDeleteConfirmDialog && onDeleteAllTestItems != null) {
+        AlertDialog(
+            onDismissRequest = { showBulkDeleteConfirmDialog = false },
+            title = { Text("Delete All Test Items?", color = TextLight, fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "This will tombstone all test items in SQLite and cancel their alarms and reminders. This action appends delete events and cannot be undone.",
+                    color = TextMuted,
+                    fontSize = 14.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showBulkDeleteConfirmDialog = false
+                        onDeleteAllTestItems()
+                        Toast.makeText(context, "All test items tombstoned", Toast.LENGTH_SHORT).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Danger)
+                ) {
+                    Text("Delete All Test Items", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBulkDeleteConfirmDialog = false }) {
+                    Text("Cancel", color = TextMuted)
+                }
+            },
+            containerColor = CardBg
+        )
+    }
 
     LazyColumn(
         verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -752,5 +972,28 @@ private fun UtilitiesSection(
                 )
             }
         }
+
+        if (onDeleteAllTestItems != null) {
+            item {
+                SectionHeader(title = "Database Maintenance & Tombstones")
+                SleekCard {
+                    Text(
+                        text = "Clean up the local SQLite database by marking all existing test items as tombstoned and cancelling any armed reminders.",
+                        color = TextMuted,
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    SleekDangerButton(
+                        text = "Delete All Test Items (Tombstone Cleanup)",
+                        icon = Icons.Default.DeleteSweep,
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = { showBulkDeleteConfirmDialog = true }
+                    )
+                }
+            }
+        }
     }
 }
+
+

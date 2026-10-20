@@ -322,7 +322,8 @@ class MainActivity : ComponentActivity() {
                                 lastExtracted = result
                             }
                         },
-                        lastExtracted = lastExtracted
+                        lastExtracted = lastExtracted,
+                        onDeleteAllTestItems = { handleDeleteAllTestItems() }
                     )
                 }
             }

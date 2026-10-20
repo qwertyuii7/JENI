@@ -23,12 +23,14 @@ import com.scheduleassistant.app.R
 import androidx.compose.ui.res.painterResource
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -141,13 +143,13 @@ fun HomeScreen(
                     letterSpacing = (-0.5).sp
                 )
                 Text(
-                    text = "Offline On-Device Engine • Asia/Kolkata",
+                    text = "Your Personal Schedule Assistant",
                     fontSize = 13.sp,
                     color = TextMuted
                 )
             }
 
-            // Warning banners with sleek styling
+            // Status & warning banners in plain, friendly language
             if (isLogOnlyMode) {
                 item {
                     SleekCard(
@@ -158,11 +160,11 @@ fun HomeScreen(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.Info, contentDescription = null, tint = Warning, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("Log-Only Mode Active", color = Warning, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text("Silent Mode is Active", color = Warning, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                         }
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            "Inbound WhatsApp messages will be analyzed and logged for diagnostics, but no alerts or alarms will be created.",
+                            "Events are detected and saved, but alarms will not ring aloud. You can turn this off in Settings.",
                             color = TextLight,
                             fontSize = 12.sp,
                             lineHeight = 16.sp
@@ -181,18 +183,18 @@ fun HomeScreen(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.Warning, contentDescription = null, tint = Danger, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("Full-Screen Alarms Not Allowed", color = Danger, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text("Lock Screen Alarms", color = Danger, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                         }
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            "Android requires full-screen intent permission so alarms can wake the screen and display ringing UI over the lockscreen.",
+                            "Allow alarms to wake your screen and show ringing controls over your lock screen when your phone is asleep.",
                             color = TextLight,
                             fontSize = 12.sp,
                             lineHeight = 16.sp
                         )
                         Spacer(Modifier.height(10.dp))
                         SleekDangerButton(
-                            text = "Enable Full-Screen Intent",
+                            text = "Allow Lock Screen Alarms",
                             onClick = {
                                 val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                                     Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
@@ -220,18 +222,18 @@ fun HomeScreen(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.Error, contentDescription = null, tint = Danger, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("Notification Listener Disconnected", color = Danger, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text("WhatsApp Access Needed", color = Danger, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                         }
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            "Schedule Assistant is not receiving WhatsApp notifications. Listener service is inactive or unbound.",
+                            "Allow Schedule Assistant to read incoming messages so it can automatically detect upcoming dates, times, and plans for you.",
                             color = TextLight,
                             fontSize = 12.sp,
                             lineHeight = 16.sp
                         )
                         Spacer(Modifier.height(10.dp))
                         SleekDangerButton(
-                            text = "Reconnect / Open Settings",
+                            text = "Turn On in Settings",
                             onClick = {
                                 context.startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
                             }
@@ -250,18 +252,18 @@ fun HomeScreen(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.Warning, contentDescription = null, tint = Warning, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("Background Optimization Warning", color = Warning, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text("Keep Reminders Active", color = Warning, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                         }
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            "Android may kill notification listener in background. Exclude this app from battery optimization.",
+                            "Allow background activity so your schedule reminders and alarms ring reliably even when your phone is idle.",
                             color = TextLight,
                             fontSize = 12.sp,
                             lineHeight = 16.sp
                         )
                         Spacer(Modifier.height(10.dp))
                         SleekOutlinedButton(
-                            text = "Disable Optimization",
+                            text = "Allow Background Activity",
                             borderColor = Warning,
                             contentColor = Warning,
                             onClick = {
@@ -321,7 +323,7 @@ fun HomeScreen(
                 item {
                     EmptyStateView(
                         title = "Your Agenda is Clear",
-                        description = "No schedules confirmed yet. Inbound WhatsApp messages will be analyzed offline and queued for review.",
+                        description = "No confirmed plans yet. When someone mentions a date or time in your WhatsApp chats, you'll see it here.",
                         icon = Icons.Default.EventAvailable
                     )
                 }
@@ -432,6 +434,32 @@ fun formatFriendlyDateTime(
     }
 }
 
+fun formatFriendlyTimeOfDay(iso: String?): String {
+    if (iso.isNullOrBlank()) return "Unspecified time"
+    return try {
+        val cleanIso = iso.replace("Z", "+00:00")
+        val parsedDate = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val zdt = java.time.ZonedDateTime.parse(cleanIso)
+            Date.from(zdt.toInstant())
+        } else {
+            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).parse(cleanIso)
+        }
+        if (parsedDate == null) return iso
+        val cal = Calendar.getInstance().apply { time = parsedDate }
+        val hour = cal.get(Calendar.HOUR_OF_DAY)
+        val timeStr = SimpleDateFormat("h:mm a", Locale.US).format(parsedDate)
+        val period = when (hour) {
+            in 4..11 -> "Morning"
+            in 12..16 -> "Afternoon"
+            in 17..21 -> "Evening"
+            else -> "Night"
+        }
+        "$timeStr ($period)"
+    } catch (_: Exception) {
+        iso
+    }
+}
+
 fun getNoAlertScheduledReason(item: ScheduleEntity, reminders: List<com.scheduleassistant.app.data.model.ReminderEntity>): String? {
     val hasActiveReminder = reminders.any { it.schedule_id == item.id && it.status == com.scheduleassistant.app.data.model.ReminderStatus.SCHEDULED }
     if (hasActiveReminder) return null
@@ -510,7 +538,7 @@ fun ConfirmedScheduleCard(
                     OutlinedTextField(
                         value = editTime,
                         onValueChange = { editTime = it },
-                        label = { Text("Start Time (ISO or HH:mm)") },
+                        label = { Text("Date & Time (e.g. Tomorrow 4:00 PM or 2026-10-21 16:00)") },
                         singleLine = true,
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = TextLight,
@@ -534,13 +562,13 @@ fun ConfirmedScheduleCard(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = if (editAlarm) "⏰ Audible Alarm" else "🔔 Reminder Notification",
+                                    text = if (editAlarm) "⏰ Sound Loud Alarm" else "🔔 Notification Reminder",
                                     fontWeight = FontWeight.SemiBold,
                                     color = if (editAlarm) Warning else TextLight,
                                     fontSize = 13.sp
                                 )
                                 Text(
-                                    text = if (editAlarm) "Rings aloud with alarm UI" else "Banner notification only",
+                                    text = if (editAlarm) "Rings aloud like an alarm clock" else "Gentle banner notification 15m before",
                                     color = TextMuted,
                                     fontSize = 11.sp
                                 )
@@ -624,9 +652,15 @@ fun ConfirmedScheduleCard(
                         )
                         val noAlertReason = getNoAlertScheduledReason(item, reminders)
                         if (noAlertReason != null) {
+                            val friendlyReason = when (noAlertReason) {
+                                "time unspecified" -> "Time not specified"
+                                "event in past" -> "Event time has passed"
+                                "invalid time format" -> "Please adjust time"
+                                else -> noAlertReason
+                            }
                             Spacer(Modifier.height(4.dp))
                             Surface(
-                                color = Color(0x33EF4444),
+                                color = DangerBg,
                                 shape = RoundedCornerShape(4.dp)
                             ) {
                                 Row(
@@ -634,10 +668,10 @@ fun ConfirmedScheduleCard(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        text = "⚠️ no alert scheduled: $noAlertReason",
+                                        text = "⚠️ No reminder: $friendlyReason",
                                         color = Danger,
                                         fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold
+                                        fontWeight = FontWeight.SemiBold
                                     )
                                 }
                             }
@@ -652,8 +686,13 @@ fun ConfirmedScheduleCard(
                         }
                     }
                 }
-                Spacer(Modifier.height(4.dp))
-                Text("\"${item.source_quote}\"", color = TextMuted, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "\"${item.source_quote}\"",
+                    color = TextMuted,
+                    fontSize = 12.sp,
+                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                )
             }
         }
     }
@@ -748,7 +787,7 @@ fun PendingItemCard(
                     OutlinedTextField(
                         value = editTime,
                         onValueChange = { editTime = it },
-                        label = { Text("Start Time (ISO or YYYY-MM-DDTHH:MM)") },
+                        label = { Text("Date & Time (e.g. Tomorrow 4:00 PM or 2026-10-21 16:00)") },
                         singleLine = true,
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = TextLight,
@@ -792,9 +831,11 @@ fun PendingItemCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(item.title, fontWeight = FontWeight.Bold, color = TextLight, fontSize = 17.sp)
-                Badge(containerColor = if (item.ambiguous) Warning else Primary) {
-                    Text("${(item.confidence * 100).toInt()}% Conf", color = Color.White)
-                }
+                StatusPill(
+                    text = if (item.ambiguous) "Needs Time Choice" else if (item.time_unspecified) "Time Needed" else "Suggested Plan",
+                    color = if (item.ambiguous || item.time_unspecified) Warning else Primary,
+                    backgroundColor = if (item.ambiguous || item.time_unspecified) WarningBg else Primary.copy(alpha = 0.15f)
+                )
             }
 
             Spacer(Modifier.height(4.dp))
@@ -806,44 +847,65 @@ fun PendingItemCard(
             )
 
             Spacer(Modifier.height(8.dp))
-            // Minimal source quote in terminal box
+            // Human-friendly chat bubble quote
             Surface(
-                color = Color(0x33000000),
-                shape = RoundedCornerShape(6.dp),
+                color = CardElevated,
+                shape = RoundedCornerShape(8.dp),
+                border = BorderStroke(1.dp, CardBorderSubtle),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(
-                    text = "Source: \"${item.source_quote}\"",
-                    color = Color(0xFF38BDF8),
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 12.sp,
-                    modifier = Modifier.padding(8.dp)
-                )
+                Row(
+                    modifier = Modifier.padding(10.dp),
+                    verticalAlignment = Alignment.Top,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ChatBubbleOutline,
+                        contentDescription = null,
+                        tint = PrimaryLight,
+                        modifier = Modifier.size(15.dp).padding(top = 2.dp)
+                    )
+                    Column {
+                        Text(
+                            text = "\"${item.source_quote}\"",
+                            color = TextLight,
+                            fontSize = 13.sp,
+                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = "Detected from WhatsApp message",
+                            color = TextSubtle,
+                            fontSize = 10.sp
+                        )
+                    }
+                }
             }
 
-            // Requirement 4: Reminder by default; alarm is opt-in per event (toggle on Pending/Confirm card)
+            // Clean, friendly notification vs loud alarm selector
             Spacer(Modifier.height(10.dp))
             Surface(
-                color = if (enableAlarm) Color(0x22F59E0B) else CardBorder,
-                shape = RoundedCornerShape(8.dp),
+                color = if (enableAlarm) WarningBg else CardBg,
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, if (enableAlarm) Warning.copy(alpha = 0.5f) else CardBorder),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = if (enableAlarm) "⏰ Audible Alarm (Opt-in Active)" else "🔔 Reminder Notification (Default)",
+                            text = if (enableAlarm) "⏰ Sound Loud Alarm" else "🔔 Notification Reminder",
                             fontWeight = FontWeight.SemiBold,
                             color = if (enableAlarm) Warning else TextLight,
                             fontSize = 13.sp
                         )
                         Text(
-                            text = if (enableAlarm) "Will ring aloud with full-screen Alarm UI" else "Banner notification only (default 15m lead)",
+                            text = if (enableAlarm) "Will ring aloud like an alarm clock" else "Gentle notification 15 minutes before",
                             color = TextMuted,
                             fontSize = 11.sp
                         )
@@ -859,30 +921,46 @@ fun PendingItemCard(
                 }
             }
 
-            // Ambiguous AM/PM Dual Reading buttons
+            // Intuitive AM/PM Resolution with Concrete Time Buttons
             if (item.ambiguous && item.start != null) {
-                Spacer(Modifier.height(8.dp))
-                Text("Ambiguous AM/PM detected — choose reading:", color = Warning, fontSize = 12.sp)
+                val altIso = remember(item.start) {
+                    try {
+                        val parts = item.start!!.split("T")
+                        val dateStr = parts[0]
+                        val timeStr = parts[1].substring(0, 5)
+                        val h = timeStr.split(":")[0].toInt()
+                        val m = timeStr.split(":")[1].toInt()
+                        val altH = if (h < 12) h + 12 else h - 12
+                        String.format(Locale.US, "%sT%02d:%02d:00+05:30", dateStr, altH, m)
+                    } catch (_: Exception) {
+                        null
+                    }
+                }
+                val timeA = formatFriendlyTimeOfDay(item.start)
+                val timeB = if (altIso != null) formatFriendlyTimeOfDay(altIso) else null
+
+                Spacer(Modifier.height(10.dp))
+                Text("Which time did you mean?", color = Warning, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(4.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     Button(
                         onClick = { tryConfirm(item.start) },
-                        colors = ButtonDefaults.buttonColors(containerColor = Warning)
+                        colors = ButtonDefaults.buttonColors(containerColor = Primary),
+                        modifier = Modifier.weight(1f)
                     ) {
-                        Text("Confirm Reading A", color = Color.Black, fontSize = 12.sp)
+                        Text("Confirm $timeA", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     }
-                    OutlinedButton(
-                        onClick = {
-                            val dateStr = item.start!!.split("T")[0]
-                            val timeStr = item.start!!.split("T")[1].substring(0, 5)
-                            val h = timeStr.split(":")[0].toInt()
-                            val m = timeStr.split(":")[1].toInt()
-                            val altH = if (h < 12) h + 12 else h - 12
-                            val altIso = String.format(Locale.US, "%sT%02d:%02d:00+05:30", dateStr, altH, m)
-                            tryConfirm(altIso)
+                    if (altIso != null && timeB != null) {
+                        OutlinedButton(
+                            onClick = { tryConfirm(altIso) },
+                            border = BorderStroke(1.dp, CardBorder),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Confirm $timeB", color = TextLight, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         }
-                    ) {
-                        Text("Confirm Reading B", color = TextLight, fontSize = 12.sp)
                     }
                 }
             }
@@ -901,7 +979,7 @@ fun PendingItemCard(
                     onClick = { showEditDialog = true },
                     colors = ButtonDefaults.buttonColors(containerColor = Accent)
                 ) {
-                    Text("Edit", color = Color.White)
+                    Text("Edit Time", color = Color.White)
                 }
                 Button(
                     onClick = { onDismiss(item.id) },
@@ -922,7 +1000,6 @@ fun PendingScreen(
     onEdit: (String, String, String?, Boolean) -> Unit = { _, _, _, _ -> }
 ) {
     val pendingList = schedules.filter { it.status == ScheduleStatus.PENDING }
-    // Requirement 7: Precision & "Maybe" List: Events with time_unspecified or ambiguous must NOT create a normal Pending card
     val normalPending = pendingList.filter { !it.time_unspecified && !it.ambiguous }
     val maybeList = pendingList.filter { it.time_unspecified || it.ambiguous }
 
@@ -935,14 +1012,14 @@ fun PendingScreen(
     ) {
         item {
             Text(
-                text = "Pending Review Queue",
+                text = "Review Suggestions",
                 fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
                 color = TextLight,
                 letterSpacing = (-0.5).sp
             )
             Text(
-                text = "One-tap confirm or choose alternate AM/PM reading. Reminder by default; alarm opt-in.",
+                text = "Plans detected from your WhatsApp messages. Confirm to schedule your reminders.",
                 fontSize = 13.sp,
                 color = TextMuted
             )
@@ -950,7 +1027,7 @@ fun PendingScreen(
 
         if (normalPending.isNotEmpty()) {
             item {
-                SectionHeader(title = "Pending Confirmations (${normalPending.size})")
+                SectionHeader(title = "Suggested Plans (${normalPending.size})")
             }
             items(normalPending, key = { it.id }) { item ->
                 PendingItemCard(
@@ -978,17 +1055,14 @@ fun PendingScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = "Maybe / Needs Clarification (${maybeList.size})",
+                        text = "Needs Clarification (${maybeList.size})",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = Warning
                     )
-                    Badge(containerColor = Warning) {
-                        Text("Low Precision", color = Color.Black)
-                    }
                 }
                 Text(
-                    text = "Items with ambiguous AM/PM times or unspecified hours. Select a reading or edit time to confirm.",
+                    text = "The time was not specified or could be morning or evening. Pick an option or edit to schedule.",
                     style = MaterialTheme.typography.bodySmall,
                     color = TextMuted
                 )
@@ -1017,11 +1091,6 @@ fun AlertsScreen(
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val db = remember { AppDatabase.getInstance(context) }
-    val scheduler = remember { com.scheduleassistant.app.service.AlarmScheduler(context) }
-    val canScheduleExact = remember { scheduler.canScheduleExactAlarms() }
-    val nextAlarmClockStr = remember { scheduler.getNextAlarmClockFormatted() }
-    val lastErrorFlow = remember { db.alarmAuditDao().getLastErrorFlow() }
-    val lastError by lastErrorFlow.collectAsState(initial = null)
     val auditsFlow = remember { db.alarmAuditDao().getRecentAuditsFlow(20) }
     val recentAudits by auditsFlow.collectAsState(initial = emptyList())
 
@@ -1045,13 +1114,13 @@ fun AlertsScreen(
                 letterSpacing = (-0.5).sp
             )
             Text(
-                text = "Exact AlarmManager.setAlarmClock alerts & System Clock alarms",
+                text = "Upcoming alerts and automatic reminders",
                 fontSize = 13.sp,
                 color = TextMuted
             )
             Spacer(Modifier.height(10.dp))
             SleekDangerButton(
-                text = "Stop All Ringing Alarms",
+                text = "Silence Any Ringing Alarm",
                 icon = Icons.Default.Cancel,
                 onClick = {
                     com.scheduleassistant.app.service.AlarmRingingService.stopAll(context)
@@ -1060,7 +1129,6 @@ fun AlertsScreen(
             )
         }
 
-        // Requirement 4: Any confirmed item without a scheduled alert shows a red "no alert scheduled: <reason>" badge on Home/Alerts
         if (confirmedWithoutAlerts.isNotEmpty()) {
             item {
                 Spacer(Modifier.height(4.dp))
@@ -1070,14 +1138,14 @@ fun AlertsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Confirmed Schedules Without Active Alerts (${confirmedWithoutAlerts.size})",
+                        text = "Events Without Alerts (${confirmedWithoutAlerts.size})",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = Danger
                     )
                 }
                 Text(
-                    text = "These events are confirmed but have no active alarm or reminder scheduled.",
+                    text = "These confirmed events do not have an active reminder scheduled. Tap edit to set a reminder time.",
                     style = MaterialTheme.typography.bodySmall,
                     color = TextMuted
                 )
@@ -1094,75 +1162,15 @@ fun AlertsScreen(
 
         if (reminders.isEmpty()) {
             item {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = CardBg),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Text(
-                            "Why is this empty?",
-                            fontWeight = FontWeight.Bold,
-                            color = Accent,
-                            fontSize = 15.sp
-                        )
-
-                        if (confirmedCount == 0) {
-                            Text(
-                                "• 0 confirmed schedules in database: Confirm an event in the Today or Pending tab to generate alerts.",
-                                color = TextMuted,
-                                fontSize = 13.sp
-                            )
-                        } else {
-                            Text(
-                                "• $confirmedCount confirmed event(s) exist, but no active alerts are scheduled (events may be in the past or time was unspecified).",
-                                color = TextMuted,
-                                fontSize = 13.sp
-                            )
-                        }
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("canScheduleExactAlarms:", color = TextLight, fontSize = 13.sp)
-                            Badge(containerColor = if (canScheduleExact) Success else Danger) {
-                                Text(if (canScheduleExact) "GRANTED" else "DENIED", color = Color.White)
-                            }
-                        }
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("Next Alarm Clock:", color = TextLight, fontSize = 13.sp)
-                            Text(nextAlarmClockStr, color = Primary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                        }
-
-                        if (lastError != null) {
-                            Card(
-                                colors = CardDefaults.cardColors(containerColor = Color(0x33EF4444)),
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Column(modifier = Modifier.padding(10.dp)) {
-                                    Text("⚠️ Last Scheduling Error", color = Danger, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                                    Text(
-                                        "${lastError?.api}: ${lastError?.errorMessage}",
-                                        color = TextLight,
-                                        fontSize = 12.sp
-                                    )
-                                    Text("At: ${lastError?.timestamp}", color = TextMuted, fontSize = 11.sp)
-                                }
-                            }
-                        }
-                    }
-                }
+                EmptyStateView(
+                    title = "No Active Alerts",
+                    description = if (confirmedCount == 0) {
+                        "You don't have any confirmed events yet. When you approve events in the Pending tab, your reminders and alarms will appear here."
+                    } else {
+                        "Your confirmed events have passed or do not have active alarms scheduled."
+                    },
+                    icon = Icons.Default.AlarmOn
+                )
             }
         } else {
             items(reminders, key = { it.id }) { rem ->
@@ -1325,19 +1333,19 @@ fun AlertsScreen(
                             Column(modifier = Modifier.weight(1f)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(
-                                        text = if (rem.type == "alarm") "⏰ ALARM (Ringing)" else "🔔 REMINDER (15m lead)",
+                                        text = if (rem.type == "alarm") "⏰ Alarm (Rings aloud)" else "🔔 Reminder (15 min lead)",
                                         fontWeight = FontWeight.Bold,
                                         color = if (rem.type == "alarm") Warning else Accent,
                                         fontSize = 12.sp
                                     )
                                 }
                                 Text(rem.title, fontWeight = FontWeight.SemiBold, color = TextLight, fontSize = 16.sp)
-                                Text("Trigger: ${formatFriendlyDateTime(rem.trigger_time)}", color = TextLight, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                                Text("Rings at: ${formatFriendlyDateTime(rem.trigger_time)}", color = TextLight, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                             }
 
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Badge(containerColor = if (rem.status.name == "FIRED") Success else Primary) {
-                                    Text(rem.status.name, color = Color.White)
+                                    Text(if (rem.status.name == "FIRED") "Triggered" else "Active", color = Color.White)
                                 }
                                 IconButton(onClick = { showEditDialog = true }) {
                                     Icon(Icons.Default.Edit, contentDescription = "Edit", tint = Accent)
@@ -1352,65 +1360,77 @@ fun AlertsScreen(
             }
         }
 
-        // Audit Log of Scheduling Attempts
+        // Friendly Recent Activity History (Replaces raw developer audit table)
         item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = CardBg),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
+            SectionHeader(title = "Recent Alert Activity")
+            if (recentAudits.isEmpty()) {
+                SleekCard {
                     Text(
-                        "Scheduling Audit Log (${recentAudits.size} attempts)",
-                        fontWeight = FontWeight.Bold,
-                        color = TextLight,
-                        fontSize = 15.sp
-                    )
-                    Text(
-                        "Every AlarmClock.ACTION_SET_ALARM and setAlarmClock attempt is recorded here.",
+                        text = "No recent alert activity recorded yet.",
                         color = TextMuted,
-                        fontSize = 12.sp
+                        fontSize = 13.sp
                     )
+                }
+            } else {
+                SleekCard {
+                    recentAudits.take(5).forEachIndexed { index, audit ->
+                        val isSuccess = audit.result == "SUCCESS"
+                        val isAlarm = audit.api.contains("Alarm", ignoreCase = true)
+                        val icon = if (!isSuccess) Icons.Default.Warning else if (isAlarm) Icons.Default.Alarm else Icons.Default.Notifications
+                        val iconTint = if (!isSuccess) Danger else if (isAlarm) Warning else Primary
 
-                    if (recentAudits.isEmpty()) {
-                        Text("No scheduling attempts recorded yet.", color = TextMuted, fontSize = 13.sp)
-                    } else {
-                        recentAudits.forEach { audit ->
-                            Row(
+                        val friendlyAction = if (isSuccess) {
+                            if (isAlarm) "Alarm scheduled for ${formatFriendlyDateTime(audit.triggerTime)}"
+                            else "Reminder set for ${formatFriendlyDateTime(audit.triggerTime)}"
+                        } else {
+                            "Could not schedule alert automatically"
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Box(
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .background(CardBorder, RoundedCornerShape(8.dp))
-                                    .padding(8.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                                    .size(32.dp)
+                                    .clip(CircleShape)
+                                    .background(iconTint.copy(alpha = 0.15f)),
+                                contentAlignment = Alignment.Center
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "${audit.api} • ${audit.entityId}",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = TextLight
-                                    )
-                                    Text(
-                                        text = "Trigger: ${audit.triggerTime}",
-                                        fontSize = 11.sp,
-                                        color = TextMuted
-                                    )
-                                    if (!audit.errorMessage.isNullOrBlank()) {
-                                        Text(
-                                            text = "Error: ${audit.errorMessage}",
-                                            fontSize = 11.sp,
-                                            color = Danger
-                                        )
-                                    }
-                                }
-                                Badge(containerColor = if (audit.result == "SUCCESS") Success else Danger) {
-                                    Text(audit.result, color = Color.White, fontSize = 10.sp)
-                                }
+                                Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(16.dp))
                             }
+
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = friendlyAction,
+                                    color = TextLight,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                val timeOnly = try {
+                                    audit.timestamp.substringAfter("T").substringBefore(".").substring(0, 5)
+                                } catch (_: Exception) {
+                                    audit.timestamp
+                                }
+                                Text(
+                                    text = if (isSuccess) "Scheduled at $timeOnly" else "Check exact alarm permissions in Settings",
+                                    color = if (isSuccess) TextMuted else Danger,
+                                    fontSize = 11.sp
+                                )
+                            }
+
+                            StatusPill(
+                                text = if (isSuccess) "Scheduled" else "Failed",
+                                color = if (isSuccess) Success else Danger,
+                                backgroundColor = if (isSuccess) SuccessBg else DangerBg
+                            )
+                        }
+
+                        if (index < minOf(recentAudits.size - 1, 4)) {
+                            HorizontalDivider(color = CardBorderSubtle, thickness = 1.dp, modifier = Modifier.padding(vertical = 8.dp))
                         }
                     }
                 }
@@ -2679,38 +2699,6 @@ fun SettingsScreen(
     val isListenerAccessGranted = NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
 
     var isExporting by remember { mutableStateOf(false) }
-    var showBulkDeleteConfirmDialog by remember { mutableStateOf(false) }
-
-    if (showBulkDeleteConfirmDialog) {
-        AlertDialog(
-            onDismissRequest = { showBulkDeleteConfirmDialog = false },
-            title = { Text("Delete All Test Items?", color = TextLight, fontWeight = FontWeight.Bold) },
-            text = {
-                Text(
-                    "This will tombstone all test items and cancel their alarms and reminders. This action appends delete events and cannot be undone.",
-                    color = TextMuted,
-                    fontSize = 14.sp
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        showBulkDeleteConfirmDialog = false
-                        onDeleteAllTestItems()
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Danger)
-                ) {
-                    Text("Delete All Test Items", color = Color.White)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showBulkDeleteConfirmDialog = false }) {
-                    Text("Cancel", color = TextMuted)
-                }
-            },
-            containerColor = CardBg
-        )
-    }
 
     LazyColumn(
         modifier = Modifier
@@ -2728,15 +2716,15 @@ fun SettingsScreen(
                 letterSpacing = (-0.5).sp
             )
             Text(
-                text = "Autonomous secretary configuration & device permissions",
+                text = "Preferences and device permissions",
                 fontSize = 13.sp,
                 color = TextMuted
             )
         }
 
-        // Section: Operating Mode
+        // Section: Detection Preferences
         item {
-            SectionHeader(title = "Operating Mode")
+            SectionHeader(title = "Detection Preferences")
             SleekCard {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -2744,10 +2732,10 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Log-Only Mode", color = TextLight, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Silent / Test Mode", color = TextLight, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                         Spacer(Modifier.height(2.dp))
                         Text(
-                            "Evaluates and logs messages without firing audible alarms. Recommended during soak audit.",
+                            "Detect and save schedules without ringing alarms. Useful while testing.",
                             color = TextMuted,
                             fontSize = 12.sp,
                             lineHeight = 16.sp
@@ -2776,10 +2764,10 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Capture All WhatsApp Chats", color = TextLight, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Listen to All WhatsApp Chats", color = TextLight, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                         Spacer(Modifier.height(2.dp))
                         Text(
-                            "When enabled, evaluates all WhatsApp chats instead of only allowlisted contacts.",
+                            "Detect schedules from all personal and group conversations on WhatsApp.",
                             color = TextMuted,
                             fontSize = 12.sp,
                             lineHeight = 16.sp
@@ -2802,17 +2790,17 @@ fun SettingsScreen(
             }
         }
 
-        // Section: System Permissions & Services
+        // Section: App Permissions
         item {
-            SectionHeader(title = "System Permissions & Background Engine")
+            SectionHeader(title = "App Permissions")
             SleekCard {
                 // 1. Notification Listener Access
                 PermissionRow(
-                    title = "Notification Listener Access",
-                    subtitle = if (isListenerConnected) "Connected & listening to WhatsApp" else "Permission required to intercept schedules",
+                    title = "WhatsApp Message Reading",
+                    subtitle = if (isListenerConnected) "Active — detecting schedules from WhatsApp" else "Permission needed to detect dates and times from chats",
                     isGranted = isListenerAccessGranted && isListenerConnected,
-                    grantedLabel = "CONNECTED",
-                    deniedLabel = "SETUP",
+                    grantedLabel = "ACTIVE",
+                    deniedLabel = "ENABLE",
                     onAction = {
                         context.startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
                     }
@@ -2822,11 +2810,11 @@ fun SettingsScreen(
 
                 // 2. Exact Alarms
                 PermissionRow(
-                    title = "Exact Alarm Scheduling",
-                    subtitle = "Required to ring alarms at the precise second (AlarmClock API)",
+                    title = "Exact Alarm Timing",
+                    subtitle = "Ensures alarms and reminders ring at the exact minute without delay",
                     isGranted = canScheduleExactAlarms,
                     grantedLabel = "ALLOWED",
-                    deniedLabel = "GRANT",
+                    deniedLabel = "ENABLE",
                     onAction = {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                             val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
@@ -2841,11 +2829,11 @@ fun SettingsScreen(
 
                 // 3. Battery Optimization
                 PermissionRow(
-                    title = "Battery Optimization Exemption",
-                    subtitle = if (isIgnoringBatteryOptimizations) "Exempted — background survival protected" else "System may terminate background listener",
+                    title = "Background Activity",
+                    subtitle = if (isIgnoringBatteryOptimizations) "Protected — reminders remain active when phone is idle" else "Allow Schedule Assistant to run in the background",
                     isGranted = isIgnoringBatteryOptimizations,
-                    grantedLabel = "EXEMPTED",
-                    deniedLabel = "EXEMPT",
+                    grantedLabel = "PROTECTED",
+                    deniedLabel = "ENABLE",
                     onAction = {
                         val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
                             data = Uri.parse("package:${context.packageName}")
@@ -2858,11 +2846,11 @@ fun SettingsScreen(
 
                 // 4. Full-Screen Alarms (FSI)
                 PermissionRow(
-                    title = "Full-Screen Alarms (Lock Screen)",
-                    subtitle = "Wakes screen and presents ringing interface over lockscreen",
+                    title = "Lock Screen Alarms",
+                    subtitle = "Wakes the screen and shows the ringing screen over your locked phone",
                     isGranted = canUseFullScreen,
                     grantedLabel = "ALLOWED",
-                    deniedLabel = "SETUP",
+                    deniedLabel = "ENABLE",
                     onAction = {
                         val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                             Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
@@ -2937,12 +2925,19 @@ fun SettingsScreen(
             }
         }
 
-        // Section: Diagnostic Data & Actions
+        // Section: Help & Troubleshooting
         item {
-            SectionHeader(title = "Diagnostic Actions")
+            SectionHeader(title = "Help & Troubleshooting")
             SleekCard {
+                Text(
+                    text = "If something isn't working as expected, you can export a safe, anonymized diagnostic summary to share.",
+                    color = TextMuted,
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp
+                )
+                Spacer(Modifier.height(10.dp))
                 SleekOutlinedButton(
-                    text = if (isExporting) "Generating Soak Log..." else "Export Anonymized Diagnostic Log",
+                    text = if (isExporting) "Generating Summary..." else "Share Diagnostic Summary",
                     icon = Icons.Default.Share,
                     modifier = Modifier.fillMaxWidth(),
                     onClick = {
@@ -2958,15 +2953,6 @@ fun SettingsScreen(
                             }
                         }
                     }
-                )
-
-                Spacer(Modifier.height(10.dp))
-
-                SleekDangerButton(
-                    text = "Delete All Test Items (Tombstone Cleanup)",
-                    icon = Icons.Default.DeleteSweep,
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = { showBulkDeleteConfirmDialog = true }
                 )
             }
         }

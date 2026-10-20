@@ -95,7 +95,7 @@ fun AppTopHeader(
 
                 // System Live Status Pill
                 val statusText = when {
-                    isLogOnly -> "Log-Only"
+                    isLogOnly -> "Silent Mode"
                     isListenerActive -> "Active"
                     else -> "Setup Required"
                 }
