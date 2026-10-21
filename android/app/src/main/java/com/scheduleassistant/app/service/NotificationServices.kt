@@ -262,11 +262,17 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
                             RawMessageEntity(id = rawMsgId, rawText = msg.rawText, source = "whatsapp", createdAt = nowIso)
                         )
 
-                        val result = pipeline.processMessage(msg.cleanText, referenceNow = msgRefIso)
+                        val result = pipeline.processMessage(
+                            msg.cleanText,
+                            referenceNow = msgRefIso,
+                            sender = msg.sender,
+                            chatTitle = msg.chatTitle
+                        )
 
-                        if (result.status == "PENDING" && result.entityId != null) {
+                        if ((result.status == "PENDING" || result.status == "NEEDS_ATTENTION") && result.entityId != null) {
                             val nextSeq = db.eventDao().getNextSeq("android-phone")
                             val hlcNow = HlcClock("android-phone").now()
+                            val lane = if (result.status == "NEEDS_ATTENTION") "NEEDS_ATTENTION" else "SCHEDULE"
 
                             val payloadJson = JSONObject().apply {
                                 put("type", result.extraction?.type)
@@ -274,14 +280,15 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
                                 put("start", result.extraction?.start)
                                 put("start_date", result.extraction?.start_date)
                                 put("end", result.extraction?.end)
-                                put("time_unspecified", result.extraction?.time_unspecified)
-                                put("ambiguous", result.extraction?.ambiguous)
+                                put("time_unspecified", result.extraction?.time_unspecified ?: (lane == "NEEDS_ATTENTION"))
+                                put("ambiguous", result.extraction?.ambiguous ?: false)
                                 put("source_quote", result.extraction?.source_quote)
                                 put("confidence", result.extraction?.confidence)
                                 put("raw_text", msg.rawText)
                                 put("raw_message_id", rawMsgId)
                                 put("sender", msg.sender)
                                 put("chat_title", msg.chatTitle)
+                                put("lane", lane)
                             }
 
                             val eventEntity = SyncEventEntity(
@@ -296,10 +303,17 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
                             )
                             db.eventDao().insertEvent(eventEntity)
 
-                            showNotificationAlert(
-                                title = "New Schedule: ${result.extraction?.title}",
-                                message = "${result.extraction?.start ?: result.extraction?.start_date ?: "Pending"} - Tap to review"
-                            )
+                            if (result.status == "PENDING") {
+                                showNotificationAlert(
+                                    title = "New Schedule: ${result.extraction?.title}",
+                                    message = "${result.extraction?.start ?: result.extraction?.start_date ?: "Pending"} - Tap to review"
+                                )
+                            } else {
+                                showNotificationAlert(
+                                    title = "Action Needed: ${result.extraction?.title}",
+                                    message = "Important item added to your Inbox"
+                                )
+                            }
                         }
                     }
                 }

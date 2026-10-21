@@ -825,16 +825,18 @@ fun PendingItemCard(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
+            val isAttention = item.lane == com.scheduleassistant.app.domain.TriageLane.NEEDS_ATTENTION || item.time_unspecified || item.ambiguous
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(item.title, fontWeight = FontWeight.Bold, color = TextLight, fontSize = 17.sp)
+                Text(item.title, fontWeight = FontWeight.Bold, color = TextLight, fontSize = 17.sp, modifier = Modifier.weight(1f, fill = false))
+                Spacer(Modifier.width(8.dp))
                 StatusPill(
-                    text = if (item.ambiguous) "Needs Time Choice" else if (item.time_unspecified) "Time Needed" else "Suggested Plan",
-                    color = if (item.ambiguous || item.time_unspecified) Warning else Primary,
-                    backgroundColor = if (item.ambiguous || item.time_unspecified) WarningBg else Primary.copy(alpha = 0.15f)
+                    text = if (item.ambiguous) "Needs Time Choice" else if (isAttention) "Needs Attention" else "Suggested Plan",
+                    color = if (isAttention) Warning else Primary,
+                    backgroundColor = if (isAttention) WarningBg else Primary.copy(alpha = 0.15f)
                 )
             }
 
@@ -882,42 +884,102 @@ fun PendingItemCard(
                 }
             }
 
-            // Clean, friendly notification vs loud alarm selector
-            Spacer(Modifier.height(10.dp))
-            Surface(
-                color = if (enableAlarm) WarningBg else CardBg,
-                shape = RoundedCornerShape(10.dp),
-                border = BorderStroke(1.dp, if (enableAlarm) Warning.copy(alpha = 0.5f) else CardBorder),
-                modifier = Modifier.fillMaxWidth()
-            ) {
+            // Reason Chips
+            if (item.reasons.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = if (enableAlarm) "⏰ Sound Loud Alarm" else "🔔 Notification Reminder",
-                            fontWeight = FontWeight.SemiBold,
-                            color = if (enableAlarm) Warning else TextLight,
-                            fontSize = 13.sp
-                        )
-                        Text(
-                            text = if (enableAlarm) "Will ring aloud like an alarm clock" else "Gentle notification 15 minutes before",
-                            color = TextMuted,
-                            fontSize = 11.sp
+                    item.reasons.take(3).forEach { reason ->
+                        val friendly = when (reason.lowercase()) {
+                            "time_found" -> "⏰ Time found"
+                            "event_found" -> "📅 Event found"
+                            "urgency_detected" -> "⚡ Urgent"
+                            "action_required" -> "⚠️ Action needed"
+                            "link_found" -> "🔗 Link"
+                            "attachment_found" -> "📎 Attachment"
+                            "hindi_notice" -> "🇮🇳 Notice"
+                            "no_concrete_time" -> "⏳ No clock time"
+                            "ambiguous_time" -> "❓ Ambiguous"
+                            else -> reason.replace('_', ' ').capitalize(Locale.ROOT)
+                        }
+                        Surface(
+                            color = CardElevated,
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, CardBorder)
+                        ) {
+                            Text(
+                                text = friendly,
+                                color = TextMuted,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Clean, friendly notification vs loud alarm selector (only if start time is specified)
+            if (!item.time_unspecified && item.start != null) {
+                Spacer(Modifier.height(10.dp))
+                Surface(
+                    color = if (enableAlarm) WarningBg else CardBg,
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, if (enableAlarm) Warning.copy(alpha = 0.5f) else CardBorder),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (enableAlarm) "⏰ Sound Loud Alarm" else "🔔 Notification Reminder",
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (enableAlarm) Warning else TextLight,
+                                fontSize = 13.sp
+                            )
+                            Text(
+                                text = if (enableAlarm) "Will ring aloud like an alarm clock" else "Gentle notification 15 minutes before",
+                                color = TextMuted,
+                                fontSize = 11.sp
+                            )
+                        }
+                        Switch(
+                            checked = enableAlarm,
+                            onCheckedChange = { enableAlarm = it },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = Warning
+                            )
                         )
                     }
-                    Switch(
-                        checked = enableAlarm,
-                        onCheckedChange = { enableAlarm = it },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.White,
-                            checkedTrackColor = Warning
+                }
+            } else {
+                Spacer(Modifier.height(8.dp))
+                Surface(
+                    color = WarningBg,
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(1.dp, Warning.copy(alpha = 0.25f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(Icons.Default.Info, contentDescription = null, tint = Warning, modifier = Modifier.size(16.dp))
+                        Text(
+                            text = "No clock time specified. Add a time to schedule alerts, or confirm as a note.",
+                            color = TextLight,
+                            fontSize = 12.sp
                         )
-                    )
+                    }
                 }
             }
 
@@ -967,19 +1029,34 @@ fun PendingItemCard(
 
             Spacer(Modifier.height(12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (!item.ambiguous && item.start != null) {
+                if (!item.ambiguous && item.start != null && !item.time_unspecified) {
                     Button(
                         onClick = { tryConfirm(null) },
                         colors = ButtonDefaults.buttonColors(containerColor = Success)
                     ) {
                         Text("Confirm", color = Color.White)
                     }
+                } else if (item.time_unspecified) {
+                    Button(
+                        onClick = { showEditDialog = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = Primary)
+                    ) {
+                        Text("Add Time", color = Color.White)
+                    }
+                    OutlinedButton(
+                        onClick = { onConfirm(item.id, null, false) },
+                        border = BorderStroke(1.dp, CardBorder)
+                    ) {
+                        Text("Confirm (No Alert)", color = TextLight)
+                    }
                 }
-                Button(
-                    onClick = { showEditDialog = true },
-                    colors = ButtonDefaults.buttonColors(containerColor = Accent)
-                ) {
-                    Text("Edit Time", color = Color.White)
+                if (!item.time_unspecified) {
+                    Button(
+                        onClick = { showEditDialog = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = Accent)
+                    ) {
+                        Text("Edit Time", color = Color.White)
+                    }
                 }
                 Button(
                     onClick = { onDismiss(item.id) },
@@ -997,11 +1074,18 @@ fun PendingScreen(
     schedules: List<ScheduleEntity>,
     onConfirm: (String, String?, Boolean) -> Unit,
     onDismiss: (String) -> Unit,
-    onEdit: (String, String, String?, Boolean) -> Unit = { _, _, _, _ -> }
+    onEdit: (String, String, String?, Boolean) -> Unit = { _, _, _, _ -> },
+    onMoveLane: ((String, com.scheduleassistant.app.domain.TriageLane) -> Unit)? = null
 ) {
+    var selectedSegment by remember { mutableStateOf("ALL") } // "ALL", "SUGGESTIONS", "ATTENTION"
+
     val pendingList = schedules.filter { it.status == ScheduleStatus.PENDING }
-    val normalPending = pendingList.filter { !it.time_unspecified && !it.ambiguous }
-    val maybeList = pendingList.filter { it.time_unspecified || it.ambiguous }
+    val suggestions = pendingList.filter {
+        it.lane == com.scheduleassistant.app.domain.TriageLane.SCHEDULE && !it.time_unspecified && !it.ambiguous
+    }
+    val needsAttention = pendingList.filter {
+        it.lane == com.scheduleassistant.app.domain.TriageLane.NEEDS_ATTENTION || it.time_unspecified || it.ambiguous
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -1012,24 +1096,92 @@ fun PendingScreen(
     ) {
         item {
             Text(
-                text = "Review Suggestions",
+                text = "Inbox & Suggestions",
                 fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
                 color = TextLight,
                 letterSpacing = (-0.5).sp
             )
             Text(
-                text = "Plans detected from your WhatsApp messages. Confirm to schedule your reminders.",
+                text = "Three-lane triage: review schedule proposals or action notices.",
                 fontSize = 13.sp,
                 color = TextMuted
             )
+            Spacer(Modifier.height(10.dp))
+
+            // Segment Tabs
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Surface(
+                    color = if (selectedSegment == "ALL") Primary else CardElevated,
+                    shape = RoundedCornerShape(20.dp),
+                    border = BorderStroke(1.dp, if (selectedSegment == "ALL") Primary else CardBorder),
+                    modifier = Modifier.clickable { selectedSegment = "ALL" }
+                ) {
+                    Text(
+                        text = "All (${pendingList.size})",
+                        color = if (selectedSegment == "ALL") Color.White else TextMuted,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    )
+                }
+
+                Surface(
+                    color = if (selectedSegment == "SUGGESTIONS") Primary else CardElevated,
+                    shape = RoundedCornerShape(20.dp),
+                    border = BorderStroke(1.dp, if (selectedSegment == "SUGGESTIONS") Primary else CardBorder),
+                    modifier = Modifier.clickable { selectedSegment = "SUGGESTIONS" }
+                ) {
+                    Text(
+                        text = "Suggestions (${suggestions.size})",
+                        color = if (selectedSegment == "SUGGESTIONS") Color.White else TextMuted,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    )
+                }
+
+                Surface(
+                    color = if (selectedSegment == "ATTENTION") Warning.copy(alpha = 0.8f) else CardElevated,
+                    shape = RoundedCornerShape(20.dp),
+                    border = BorderStroke(1.dp, if (selectedSegment == "ATTENTION") Warning else CardBorder),
+                    modifier = Modifier.clickable { selectedSegment = "ATTENTION" }
+                ) {
+                    Text(
+                        text = "Needs Attention (${needsAttention.size})",
+                        color = if (selectedSegment == "ATTENTION") Color.White else Warning,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    )
+                }
+            }
         }
 
-        if (normalPending.isNotEmpty()) {
+        if (pendingList.isEmpty()) {
             item {
-                SectionHeader(title = "Suggested Plans (${normalPending.size})")
+                EmptyStateView(
+                    title = "All Caught Up",
+                    description = "No items waiting for review. New schedule proposals and important notices will appear here.",
+                    icon = Icons.Default.CheckCircle
+                )
             }
-            items(normalPending, key = { it.id }) { item ->
+        }
+
+        // Suggestions Segment
+        if (selectedSegment in listOf("ALL", "SUGGESTIONS") && suggestions.isNotEmpty()) {
+            item {
+                SectionHeader(title = "Suggested Plans (${suggestions.size})")
+                Text(
+                    text = "Concrete date and time found. Confirm to set reminders and alarms.",
+                    fontSize = 12.sp,
+                    color = TextMuted
+                )
+            }
+            items(suggestions, key = { it.id }) { item ->
                 PendingItemCard(
                     item = item,
                     onConfirm = onConfirm,
@@ -1037,37 +1189,31 @@ fun PendingScreen(
                     onEdit = onEdit
                 )
             }
-        } else if (maybeList.isEmpty()) {
-            item {
-                EmptyStateView(
-                    title = "All Caught Up",
-                    description = "No items waiting for review. New schedule proposals from WhatsApp notifications will appear here.",
-                    icon = Icons.Default.CheckCircle
-                )
-            }
         }
 
-        if (maybeList.isNotEmpty()) {
+        // Needs Attention Segment
+        if (selectedSegment in listOf("ALL", "ATTENTION") && needsAttention.isNotEmpty()) {
             item {
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(4.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    Icon(Icons.Default.PriorityHigh, contentDescription = null, tint = Warning, modifier = Modifier.size(18.dp))
                     Text(
-                        text = "Needs Clarification (${maybeList.size})",
+                        text = "Needs Attention (${needsAttention.size})",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = Warning
                     )
                 }
                 Text(
-                    text = "The time was not specified or could be morning or evening. Pick an option or edit to schedule.",
+                    text = "Important notices, deadlines, or items without a concrete time. Add a time to schedule alerts, or confirm as a note.",
                     style = MaterialTheme.typography.bodySmall,
                     color = TextMuted
                 )
             }
-            items(maybeList, key = { it.id }) { item ->
+            items(needsAttention, key = { it.id }) { item ->
                 PendingItemCard(
                     item = item,
                     onConfirm = onConfirm,
@@ -2000,6 +2146,15 @@ fun DiagnosticsScreen(
                     }
                 }
             }
+        }
+
+        // Muted-chat warning banner (Day 3 requirement 5)
+        item {
+            WarningBanner(
+                title = "Muted WhatsApp Chats Invisible to Android",
+                message = "WhatsApp silences status-bar notifications for muted or archived chats. Because Schedule Assistant ingests incoming schedules via the Android NotificationListenerService, messages sent in muted chats are never broadcast to the app. Keep critical class and meeting chats unmuted in WhatsApp so events can be triaged automatically. (needs owner verification)",
+                bannerColor = Warning
+            )
         }
 
         // Chat Allowlist & Ingestion Decisions Card (Requirement 3)

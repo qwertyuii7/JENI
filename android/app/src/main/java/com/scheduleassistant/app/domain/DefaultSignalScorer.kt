@@ -10,7 +10,7 @@ import java.util.regex.Pattern
  * Zero android.* imports. Runs on pure JVM.
  */
 class DefaultSignalScorer(
-    private val config: SignalConfig
+    private val config: SignalConfig = SignalConfig()
 ) : SignalScorer {
 
     private val timePattern12h = Pattern.compile(

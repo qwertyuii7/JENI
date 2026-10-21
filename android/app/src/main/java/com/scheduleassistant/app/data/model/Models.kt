@@ -1,5 +1,7 @@
 package com.scheduleassistant.app.data.model
 
+import com.scheduleassistant.app.domain.TriageLane
+
 data class ExtractionTarget(
     val title: String,
     val original_start: String? = null,
@@ -51,13 +53,17 @@ data class ScheduleEntity(
     var status: ScheduleStatus = ScheduleStatus.PENDING,
     var deleted: Boolean = false,
     var has_alarm: Boolean = false,
-    val source_quote: String,
+    val source_quote: String = "",
     val raw_text: String? = null,
-    var confidence: Double,
-    val created_at: String,
-    var updated_at: String,
+    var confidence: Double = 1.0,
+    val created_at: String = "",
+    var updated_at: String = "",
     var target_id: String? = null,
-    val candidate_matches: List<Map<String, Any?>> = emptyList()
+    val candidate_matches: List<Map<String, Any?>> = emptyList(),
+    var lane: TriageLane = TriageLane.SCHEDULE,
+    var reasons: List<String> = emptyList(),
+    var chat_title: String? = null,
+    var sender: String? = null
 )
 
 enum class ReminderStatus {

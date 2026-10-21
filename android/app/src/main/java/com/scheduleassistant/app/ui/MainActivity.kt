@@ -291,7 +291,8 @@ class MainActivity : ComponentActivity() {
                         onDismiss = { id ->
                             handleDismissSchedule(id)
                         },
-                        onEdit = { id, title, start, alarm -> handleEditSchedule(id, title, start, alarm) }
+                        onEdit = { id, title, start, alarm -> handleEditSchedule(id, title, start, alarm) },
+                        onMoveLane = { id, toLane -> handleMoveLane(id, toLane) }
                     )
                     AppTab.ALERTS -> AlertsScreen(
                         reminders = reminders,
@@ -316,6 +317,9 @@ class MainActivity : ComponentActivity() {
                     AppTab.DEV_CONSOLE -> DeveloperDashboardScreen(
                         onNavigateBack = { currentTab = AppTab.SETTINGS },
                         syncEvents = syncEvents,
+                        chatPriors = projectedState.chatPriors,
+                        senderPriors = projectedState.senderPriors,
+                        ignoreCount = projectedState.ignoreCount,
                         onInjectMessage = { text ->
                             lifecycleScope.launch {
                                 val result = handleInjectMessage(text)
@@ -367,6 +371,10 @@ class MainActivity : ComponentActivity() {
             if (customTime != null) {
                 payloadJson.put("start", customTime)
                 payloadJson.put("time_unspecified", false)
+            }
+            if (target != null) {
+                payloadJson.put("chat_title", target.chat_title)
+                payloadJson.put("sender", target.sender)
             }
 
             val confirmEntity = SyncEventEntity(
@@ -479,9 +487,19 @@ class MainActivity : ComponentActivity() {
 
     private fun handleDismissSchedule(id: String) {
         lifecycleScope.launch(Dispatchers.IO) {
+            val allEvents = db.eventDao().getAllEvents().map { it.toSyncEvent() }
+            val projected = com.scheduleassistant.app.data.projection.ProjectionEngine.projectState(allEvents)
+            val target = projected.schedules[id]
             val nextSeq = db.eventDao().getNextSeq(deviceId)
             val hlcNow = hlc.now()
             val nowIso = getIsoNow()
+
+            val payloadJson = JSONObject().apply {
+                if (target != null) {
+                    put("chat_title", target.chat_title)
+                    put("sender", target.sender)
+                }
+            }
 
             val dismissEntity = SyncEventEntity(
                 id = UUID.randomUUID().toString(),
@@ -491,13 +509,43 @@ class MainActivity : ComponentActivity() {
                 hlc = hlcNow,
                 type = "event_dismissed",
                 entityId = id,
-                payload = "{}"
+                payload = payloadJson.toString()
             )
             db.eventDao().insertEvent(dismissEntity)
 
             withContext(Dispatchers.Main) {
                 alarmScheduler.cancelAlertsForSchedule(id)
             }
+        }
+    }
+
+    fun handleMoveLane(id: String, toLane: com.scheduleassistant.app.domain.TriageLane) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val allEvents = db.eventDao().getAllEvents().map { it.toSyncEvent() }
+            val projected = com.scheduleassistant.app.data.projection.ProjectionEngine.projectState(allEvents)
+            val target = projected.schedules[id]
+            val nextSeq = db.eventDao().getNextSeq(deviceId)
+            val hlcNow = hlc.now()
+            val nowIso = getIsoNow()
+
+            val payloadJson = JSONObject().apply {
+                put("from_lane", target?.lane?.name ?: "UNKNOWN")
+                put("to_lane", toLane.name)
+                put("chat_title", target?.chat_title)
+                put("sender", target?.sender)
+            }
+
+            val moveEntity = SyncEventEntity(
+                id = UUID.randomUUID().toString(),
+                timestamp = nowIso,
+                deviceId = deviceId,
+                seq = nextSeq,
+                hlc = hlcNow,
+                type = "moved_lane",
+                entityId = id,
+                payload = payloadJson.toString()
+            )
+            db.eventDao().insertEvent(moveEntity)
         }
     }
 

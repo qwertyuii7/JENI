@@ -5,6 +5,12 @@ import com.scheduleassistant.app.data.model.ScheduleEntity
 import com.scheduleassistant.app.data.model.ScheduleStatus
 import com.scheduleassistant.app.data.model.SyncEvent
 import com.scheduleassistant.app.data.projection.ProjectionEngine
+import com.scheduleassistant.app.domain.DefaultLaneClassifier
+import com.scheduleassistant.app.domain.DefaultSignalScorer
+import com.scheduleassistant.app.domain.LaneClassifier
+import com.scheduleassistant.app.domain.SignalScorer
+import com.scheduleassistant.app.domain.TriageLane
+import com.scheduleassistant.app.domain.UserProfile
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -18,7 +24,7 @@ interface NotificationDispatcher {
 }
 
 data class PipelineResult(
-    val status: String, // "PENDING", "REJECTED", "PARSE_FAILED", "FLOOD_TRUNCATED"
+    val status: String, // "PENDING", "NEEDS_ATTENTION", "IGNORED", "REJECTED", "PARSE_FAILED", "FLOOD_TRUNCATED"
     val entityId: String? = null,
     val extraction: ExtractionOutput? = null,
     val message: String,
@@ -33,7 +39,10 @@ class IngestionPipeline(
     private val hlc: HlcClock,
     private val eventStore: MutableList<SyncEvent>,
     private val rawMessageStore: MutableMap<String, String>,
-    private val dispatcher: NotificationDispatcher? = null
+    private val dispatcher: NotificationDispatcher? = null,
+    private val signalScorer: SignalScorer = DefaultSignalScorer(),
+    private val laneClassifier: LaneClassifier = DefaultLaneClassifier(),
+    private val userProfile: UserProfile = UserProfile()
 ) {
     private var seqCounter: Long = 0
 
@@ -42,7 +51,12 @@ class IngestionPipeline(
     }
 
     @Synchronized
-    fun processMessage(rawText: String, referenceNow: String = "2026-10-12T10:00:00+05:30"): PipelineResult {
+    fun processMessage(
+        rawText: String,
+        referenceNow: String = "2026-10-12T10:00:00+05:30",
+        sender: String? = null,
+        chatTitle: String? = null
+    ): PipelineResult {
         val nowIso = isoFormat.format(Date())
         val rawMessageId = "raw-${UUID.randomUUID()}"
         rawMessageStore[rawMessageId] = rawText
@@ -63,7 +77,9 @@ class IngestionPipeline(
                     "reason" to "flood_truncated",
                     "raw_text" to rawText,
                     "raw_message_id" to rawMessageId,
-                    "message" to "Message exceeded flood limit"
+                    "message" to "Message exceeded flood limit",
+                    "chat_title" to chatTitle,
+                    "sender" to sender
                 )
             )
             eventStore.add(floodEvent)
@@ -71,59 +87,154 @@ class IngestionPipeline(
             return PipelineResult("FLOOD_TRUNCATED", message = "Message flood detected and truncated")
         }
 
-        // 2. Prefilter
+        // 2. Prefilter & Injection guard
         val filterRes = prefilter.prefilter(rawText)
         if (!filterRes.shouldParse) {
-            if (filterRes.reason in listOf("empty_input", "casual_chatter", "otp_noise", "price_noise", "score_noise", "pure_injection")) {
-                return PipelineResult("REJECTED", message = "Ignored by prefilter: ${filterRes.reason}")
+            if (filterRes.reason == "empty_input") {
+                return PipelineResult("REJECTED", message = "Ignored by prefilter: empty_input")
+            }
+            if (filterRes.reason == "pure_injection") {
+                val ignoreId = "ignore-${UUID.randomUUID()}"
+                val ignoreEvent = SyncEvent(
+                    id = UUID.randomUUID().toString(),
+                    timestamp = nowIso,
+                    device_id = deviceId,
+                    seq = ++seqCounter,
+                    hlc = hlc.now(),
+                    type = "event_ignored",
+                    entity_id = ignoreId,
+                    payload = mapOf(
+                        "reasons" to listOf("prompt_injection", "security_blocked"),
+                        "confidence" to 1.0,
+                        "raw_text" to rawText,
+                        "raw_message_id" to rawMessageId,
+                        "chat_title" to chatTitle,
+                        "sender" to sender
+                    )
+                )
+                eventStore.add(ignoreEvent)
+                return PipelineResult("IGNORED", message = "Blocked prompt injection")
+            }
+        }
+
+        // 3. Triage Signal Scoring with Learned Priors
+        val projectedState = ProjectionEngine.projectState(eventStore)
+        val chatPriors = projectedState.chatPriors
+        val senderPriors = projectedState.senderPriors
+
+        val signalFeatures = signalScorer.score(
+            normalizedText = rawText,
+            sender = sender,
+            chatTitle = chatTitle,
+            userProfile = userProfile,
+            chatPriors = chatPriors,
+            senderPriors = senderPriors
+        )
+        val classification = laneClassifier.classify(signalFeatures)
+
+        // 4. IGNORE Lane: Confident noise / chitchat / promo
+        if (classification.lane == TriageLane.IGNORE) {
+            val ignoreId = "ignore-${UUID.randomUUID()}"
+            val ignoreEvent = SyncEvent(
+                id = UUID.randomUUID().toString(),
+                timestamp = nowIso,
+                device_id = deviceId,
+                seq = ++seqCounter,
+                hlc = hlc.now(),
+                type = "event_ignored",
+                entity_id = ignoreId,
+                payload = mapOf(
+                    "reasons" to classification.reasons,
+                    "confidence" to classification.confidence,
+                    "raw_text" to rawText,
+                    "raw_message_id" to rawMessageId,
+                    "chat_title" to chatTitle,
+                    "sender" to sender
+                )
+            )
+            eventStore.add(ignoreEvent)
+            return PipelineResult(
+                status = "IGNORED",
+                message = "Message routed to IGNORE lane: ${classification.reasons.joinToString()}",
+                extraction = null
+            )
+        }
+
+        // 5. Parse using ScheduleParser
+        val extraction = parser.parse(rawText, referenceNow)
+
+        // 6. NEEDS_ATTENTION Lane: Action items, notices, attachments, or time-unspecified items
+        val isAttentionLane = classification.lane == TriageLane.NEEDS_ATTENTION ||
+                extraction == null ||
+                extraction.time_unspecified ||
+                extraction.ambiguous
+
+        if (isAttentionLane) {
+            val effectiveReasons = classification.reasons.toMutableList()
+            if (extraction == null && !effectiveReasons.contains("unresolved_rules")) {
+                effectiveReasons.add("unresolved_rules")
+            } else if (extraction?.time_unspecified == true && !effectiveReasons.contains("no_concrete_time")) {
+                effectiveReasons.add("no_concrete_time")
+            } else if (extraction?.ambiguous == true && !effectiveReasons.contains("ambiguous_time")) {
+                effectiveReasons.add("ambiguous_time")
             }
 
-            // Visible parse failure event
-            val failEvent = SyncEvent(
+            val effectiveExtraction = extraction ?: ExtractionOutput(
+                type = "notice",
+                title = extractNoticeTitle(rawText),
+                start = null,
+                start_date = extractNoticeDate(rawText),
+                end = null,
+                time_unspecified = true,
+                ambiguous = false,
+                source_quote = rawText.take(120),
+                confidence = classification.confidence
+            )
+            if (extraction != null) {
+                effectiveExtraction.time_unspecified = true
+            }
+
+            val entityId = "sched-${UUID.randomUUID()}"
+            val extractEvent = SyncEvent(
                 id = UUID.randomUUID().toString(),
                 timestamp = nowIso,
                 device_id = deviceId,
                 seq = ++seqCounter,
                 hlc = hlc.now(),
-                type = "parse_failed",
-                entity_id = "fail-${UUID.randomUUID()}",
+                type = "event_extracted",
+                entity_id = entityId,
                 payload = mapOf(
+                    "type" to effectiveExtraction.type,
+                    "title" to effectiveExtraction.title,
+                    "start" to effectiveExtraction.start,
+                    "start_date" to effectiveExtraction.start_date,
+                    "time_unspecified" to true,
+                    "ambiguous" to effectiveExtraction.ambiguous,
+                    "source_quote" to effectiveExtraction.source_quote,
+                    "confidence" to effectiveExtraction.confidence,
                     "raw_text" to rawText,
                     "raw_message_id" to rawMessageId,
-                    "reason" to (filterRes.reason ?: "unresolved_prefilter")
+                    "lane" to "NEEDS_ATTENTION",
+                    "reasons" to effectiveReasons,
+                    "chat_title" to chatTitle,
+                    "sender" to sender
                 )
             )
-            eventStore.add(failEvent)
-            dispatcher?.onAlert("Schedule Assistant: Could Not Parse Message", "Received: \"${rawText.take(100)}\"", "info")
-            return PipelineResult("PARSE_FAILED", message = "Parse failed: ${filterRes.reason}")
-        }
+            eventStore.add(extractEvent)
 
-        // 3. Parser
-        val extraction = parser.parse(rawText, referenceNow)
-        if (extraction == null) {
-            val failEvent = SyncEvent(
-                id = UUID.randomUUID().toString(),
-                timestamp = nowIso,
-                device_id = deviceId,
-                seq = ++seqCounter,
-                hlc = hlc.now(),
-                type = "parse_failed",
-                entity_id = "fail-${UUID.randomUUID()}",
-                payload = mapOf(
-                    "raw_text" to rawText,
-                    "raw_message_id" to rawMessageId,
-                    "reason" to "unresolved_rules"
-                )
+            return PipelineResult(
+                status = "NEEDS_ATTENTION",
+                entityId = entityId,
+                extraction = effectiveExtraction,
+                message = "Item routed to Needs Attention lane: ${effectiveReasons.joinToString()}"
             )
-            eventStore.add(failEvent)
-            dispatcher?.onAlert("Schedule Assistant: Could Not Parse Message", "Received: \"${rawText.take(100)}\"", "info")
-            return PipelineResult("PARSE_FAILED", message = "Extraction returned null")
         }
 
-        // 4. Target Resolver
+        // 7. SCHEDULE Lane with concrete resolved time
+        val concreteExtraction = extraction!!
         val candidates = mutableListOf<ScheduleEntity>()
-        if (extraction.type == "cancel" || extraction.type == "reschedule") {
-            val targetTitle = (extraction.target?.title ?: extraction.title).lowercase().trim()
+        if (concreteExtraction.type == "cancel" || concreteExtraction.type == "reschedule") {
+            val targetTitle = (concreteExtraction.target?.title ?: concreteExtraction.title).lowercase().trim()
             val cleanTarget = specLoader.normalizeTitleForMatching(targetTitle)
             val existingSchedules = getProjectedSchedules()
 
@@ -145,9 +256,9 @@ class IngestionPipeline(
                 val sTitle = sched.title.lowercase().trim()
                 val cleanSched = specLoader.normalizeTitleForMatching(sTitle)
                 val isSynonym = specLoader.intraTypeSynonyms[targetTitle]?.contains(sTitle) == true ||
-                                specLoader.intraTypeSynonyms[cleanTarget]?.contains(cleanSched) == true ||
-                                areTitlesSynonyms(cleanSched, cleanTarget) ||
-                                areTitlesSynonyms(sTitle, targetTitle)
+                        specLoader.intraTypeSynonyms[cleanTarget]?.contains(cleanSched) == true ||
+                        areTitlesSynonyms(cleanSched, cleanTarget) ||
+                        areTitlesSynonyms(sTitle, targetTitle)
                 if (sTitle == targetTitle || cleanSched == cleanTarget ||
                     sTitle.contains(targetTitle) || targetTitle.contains(sTitle) ||
                     cleanSched.contains(cleanTarget) || cleanTarget.contains(cleanSched) ||
@@ -158,21 +269,20 @@ class IngestionPipeline(
 
             if (candidates.size == 1) {
                 val matched = candidates[0]
-                extraction.target?.matched_entity_id = matched.id
-                // Time inheritance for time_unspecified reschedules
-                if (extraction.type == "reschedule" && extraction.time_unspecified && matched.start != null) {
+                concreteExtraction.target?.matched_entity_id = matched.id
+                if (concreteExtraction.type == "reschedule" && concreteExtraction.time_unspecified && matched.start != null) {
                     val origTime = matched.start!!.split("T")[1]
-                    if (extraction.start_date != null) {
-                        extraction.start = "${extraction.start_date}T$origTime"
-                        extraction.time_unspecified = false
+                    if (concreteExtraction.start_date != null) {
+                        concreteExtraction.start = "${concreteExtraction.start_date}T$origTime"
+                        concreteExtraction.time_unspecified = false
                     }
                 }
             } else {
-                extraction.ambiguous = true
+                concreteExtraction.ambiguous = true
             }
         }
 
-        // 5. Emit PENDING event_extracted
+        // Emit PENDING event_extracted for SCHEDULE lane
         val entityId = "sched-${UUID.randomUUID()}"
         val extractEvent = SyncEvent(
             id = UUID.randomUUID().toString(),
@@ -183,16 +293,20 @@ class IngestionPipeline(
             type = "event_extracted",
             entity_id = entityId,
             payload = mapOf(
-                "type" to extraction.type,
-                "title" to extraction.title,
-                "start" to extraction.start,
-                "start_date" to extraction.start_date,
-                "time_unspecified" to extraction.time_unspecified,
-                "ambiguous" to extraction.ambiguous,
-                "source_quote" to extraction.source_quote,
-                "confidence" to extraction.confidence,
+                "type" to concreteExtraction.type,
+                "title" to concreteExtraction.title,
+                "start" to concreteExtraction.start,
+                "start_date" to concreteExtraction.start_date,
+                "time_unspecified" to concreteExtraction.time_unspecified,
+                "ambiguous" to concreteExtraction.ambiguous,
+                "source_quote" to concreteExtraction.source_quote,
+                "confidence" to concreteExtraction.confidence,
                 "raw_text" to rawText,
                 "raw_message_id" to rawMessageId,
+                "lane" to "SCHEDULE",
+                "reasons" to classification.reasons,
+                "chat_title" to chatTitle,
+                "sender" to sender,
                 "candidate_matches" to candidates.map { mapOf("id" to it.id, "title" to it.title, "start" to it.start) }
             )
         )
@@ -201,10 +315,37 @@ class IngestionPipeline(
         return PipelineResult(
             status = "PENDING",
             entityId = entityId,
-            extraction = extraction,
+            extraction = concreteExtraction,
             candidates = candidates,
-            message = "Event extracted and stored as PENDING"
+            message = "Event extracted and stored as PENDING suggestion"
         )
+    }
+
+    @Synchronized
+    fun moveScheduleLane(entityId: String, targetLane: TriageLane, reason: String = "user_action"): Boolean {
+        val schedules = getProjectedSchedules()
+        val sched = schedules[entityId] ?: return false
+        val fromLane = sched.lane.name
+        val toLane = targetLane.name
+
+        val moveEvent = SyncEvent(
+            id = UUID.randomUUID().toString(),
+            timestamp = isoFormat.format(Date()),
+            device_id = deviceId,
+            seq = ++seqCounter,
+            hlc = hlc.now(),
+            type = "moved_lane",
+            entity_id = entityId,
+            payload = mapOf(
+                "from_lane" to fromLane,
+                "to_lane" to toLane,
+                "reason" to reason,
+                "chat_title" to sched.chat_title,
+                "sender" to sched.sender
+            )
+        )
+        eventStore.add(moveEvent)
+        return true
     }
 
     @Synchronized
@@ -218,6 +359,8 @@ class IngestionPipeline(
             payload["start"] = timeOverride
             payload["time_unspecified"] = false
         }
+        payload["chat_title"] = sched.chat_title
+        payload["sender"] = sched.sender
 
         val confirmEvent = SyncEvent(
             id = UUID.randomUUID().toString(),
@@ -297,7 +440,10 @@ class IngestionPipeline(
             hlc = hlc.now(),
             type = "event_dismissed",
             entity_id = entityId,
-            payload = emptyMap()
+            payload = mapOf(
+                "chat_title" to sched.chat_title,
+                "sender" to sched.sender
+            )
         )
         eventStore.add(dismissEvent)
         return true
@@ -305,5 +451,16 @@ class IngestionPipeline(
 
     private fun getProjectedSchedules(): Map<String, ScheduleEntity> {
         return ProjectionEngine.projectState(eventStore).schedules
+    }
+
+    private fun extractNoticeTitle(rawText: String): String {
+        val firstLine = rawText.lines().firstOrNull { it.isNotBlank() } ?: "Notice"
+        val clean = firstLine.replace(Regex("(?i)^(important notice|notice|circular|attention|urgent):?\\s*"), "").trim()
+        return if (clean.length in 3..60) clean else if (clean.length > 60) clean.take(57) + "..." else "College Notice"
+    }
+
+    private fun extractNoticeDate(rawText: String): String? {
+        val dateRegex = Regex("(?i)\\b(\\d{1,2}[/-]\\d{1,2}[/-]\\d{2,4}|\\d{1,2}(?:st|nd|rd|th)?\\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*)\\b")
+        return dateRegex.find(rawText)?.value
     }
 }

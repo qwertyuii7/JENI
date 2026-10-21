@@ -22,13 +22,56 @@ data class UserProfile(
     val rollNumber: String? = null
 )
 
+data class PriorUpdateEvent(
+    val type: String, // "event_confirmed", "event_dismissed", "moved_lane"
+    val chatTitle: String?,
+    val sender: String?,
+    val fromLane: String? = null,
+    val toLane: String? = null
+)
+
 data class SignalConfig(
-    val eventNouns: List<String> = emptyList(),
-    val urgencyTokens: List<String> = emptyList(),
-    val actionTokens: List<String> = emptyList(),
-    val linkPatterns: List<String> = emptyList(),
-    val attachmentIndicators: List<String> = emptyList(),
-    val noiseIndicators: List<String> = emptyList()
+    val eventNouns: List<String> = listOf(
+        "class", "classes", "lecture", "lab", "viva", "exam", "test", "quiz",
+        "meeting", "sync", "presentation", "seminar", "workshop", "webinar",
+        "discussion", "session", "practical", "deadline", "submission", "interview",
+        "orientation", "briefing", "town hall", "review", "standup", "demo",
+        "क्लास", "कक्षा", "लेक्चर", "लैब", "परीक्षा", "टेस्ट", "मीटिंग", "बैठक",
+        "कार्यशाला", "सेमिनार", "प्रैक्टिकल", "प्रस्तुति", "सत्र"
+    ),
+    val urgencyTokens: List<String> = listOf(
+        "urgent", "urgently", "mandatory", "compulsory", "important", "immediate",
+        "immediately", "sharp", "strict", "strictly", "deadline", "last date",
+        "last chance", "otherwise", "fail", "penalty", "debarred", "detained",
+        "action will be taken", "must attend", "must submit", "notice", "circular",
+        "attention", "zaroori", "zaruri", "dhyaan de", "dhayan de", "debar",
+        "आवश्यक", "अति आवश्यक", "सूचना", "महत्वपूर्ण", "अनिवार्य", "अंतिम तिथि",
+        "ध्यान दें", "कार्रवाई"
+    ),
+    val actionTokens: List<String> = listOf(
+        "submit", "submission", "fill", "register", "registration", "bring",
+        "carry", "report", "sign", "collect", "pay", "fee", "documents",
+        "form", "forms", "apply", "application", "attend", "verify",
+        "jama", "bharna", "जमा", "भरें", "उपस्थित", "आवेदन", "फॉर्म", "दस्तावेज़"
+    ),
+    val linkPatterns: List<String> = listOf(
+        "meet.google.com",
+        "zoom.us",
+        "teams.microsoft.com",
+        "webex.com",
+        "forms.gle",
+        "docs.google.com/forms"
+    ),
+    val attachmentIndicators: List<String> = listOf(
+        "pdf", "circular", "attachment", "attached", "document", "notice copy", "संलग्न"
+    ),
+    val noiseIndicators: List<String> = listOf(
+        "good morning", "good night", "happy birthday", "congratulations",
+        "deal of the day", "discount", "promo", "cashback", "coupon", "flat off",
+        "limited offer", "otp", "verification code", "lottery", "winner",
+        "subh prabhat", "shubh prabhat", "subh ratri", "shubh ratri",
+        "शुभ प्रभात", "शुभ रात्रि", "बधाई", "शुभकामनाएं"
+    )
 ) {
     companion object {
         fun fromJson(jsonStr: String): SignalConfig {

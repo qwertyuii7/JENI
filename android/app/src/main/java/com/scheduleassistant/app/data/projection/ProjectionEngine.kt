@@ -5,12 +5,18 @@ import com.scheduleassistant.app.data.model.ReminderStatus
 import com.scheduleassistant.app.data.model.ScheduleEntity
 import com.scheduleassistant.app.data.model.ScheduleStatus
 import com.scheduleassistant.app.data.model.SyncEvent
+import com.scheduleassistant.app.domain.PriorCalculator
+import com.scheduleassistant.app.domain.PriorUpdateEvent
+import com.scheduleassistant.app.domain.TriageLane
 import com.scheduleassistant.app.engine.HlcClock
 import org.json.JSONObject
 
 data class ProjectedState(
     val schedules: Map<String, ScheduleEntity>,
-    val reminders: Map<String, ReminderEntity>
+    val reminders: Map<String, ReminderEntity>,
+    val chatPriors: Map<String, Double> = emptyMap(),
+    val senderPriors: Map<String, Double> = emptyMap(),
+    val ignoreCount: Int = 0
 )
 
 object ProjectionEngine {
@@ -19,6 +25,8 @@ object ProjectionEngine {
         val schedulesInternal = mutableMapOf<String, ScheduleEntity>()
         val remindersInternal = mutableMapOf<String, ReminderEntity>()
         val deletedAtHlc = mutableMapOf<String, String>()
+        val priorEvents = mutableListOf<PriorUpdateEvent>()
+        var ignoreCounter = 0
 
         // 1. Deduplicate by event id
         val seen = HashSet<String>()
@@ -47,6 +55,16 @@ object ProjectionEngine {
                     val quote = ev.payload["source_quote"] as? String ?: ""
                     val rawText = ev.payload["raw_text"] as? String
                     val conf = (ev.payload["confidence"] as? Number)?.toDouble() ?: 0.85
+                    val laneStr = ev.payload["lane"] as? String ?: "SCHEDULE"
+                    val lane = when (laneStr.uppercase()) {
+                        "NEEDS_ATTENTION", "ATTENTION" -> TriageLane.NEEDS_ATTENTION
+                        "IGNORE" -> TriageLane.IGNORE
+                        else -> TriageLane.SCHEDULE
+                    }
+                    val rawReasons = ev.payload["reasons"] as? List<*>
+                    val reasons = rawReasons?.mapNotNull { it?.toString() } ?: emptyList()
+                    val chatTitle = ev.payload["chat_title"] as? String
+                    val sender = ev.payload["sender"] as? String
 
                     schedulesInternal[ev.entity_id] = ScheduleEntity(
                         id = ev.entity_id,
@@ -63,7 +81,11 @@ object ProjectionEngine {
                         raw_text = rawText,
                         confidence = conf,
                         created_at = ev.timestamp,
-                        updated_at = ev.timestamp
+                        updated_at = ev.timestamp,
+                        lane = lane,
+                        reasons = reasons,
+                        chat_title = chatTitle,
+                        sender = sender
                     )
                 }
 
@@ -79,6 +101,9 @@ object ProjectionEngine {
                             s.time_unspecified = false
                         }
                     }
+                    val chat = (ev.payload["chat_title"] as? String) ?: s?.chat_title
+                    val snd = (ev.payload["sender"] as? String) ?: s?.sender
+                    priorEvents.add(PriorUpdateEvent(type = "event_confirmed", chatTitle = chat, sender = snd))
                 }
 
                 "event_dismissed" -> {
@@ -87,6 +112,35 @@ object ProjectionEngine {
                         s.status = ScheduleStatus.DISMISSED
                         s.updated_at = ev.timestamp
                     }
+                    val chat = (ev.payload["chat_title"] as? String) ?: s?.chat_title
+                    val snd = (ev.payload["sender"] as? String) ?: s?.sender
+                    priorEvents.add(PriorUpdateEvent(type = "event_dismissed", chatTitle = chat, sender = snd))
+                }
+
+                "moved_lane" -> {
+                    val s = schedulesInternal[ev.entity_id]
+                    val toLaneStr = ev.payload["to_lane"] as? String ?: "SCHEDULE"
+                    val targetLane = when (toLaneStr.uppercase()) {
+                        "NEEDS_ATTENTION", "ATTENTION" -> TriageLane.NEEDS_ATTENTION
+                        "IGNORE" -> TriageLane.IGNORE
+                        else -> TriageLane.SCHEDULE
+                    }
+                    if (s != null) {
+                        s.lane = targetLane
+                        val rawReasons = ev.payload["reasons"] as? List<*>
+                        if (rawReasons != null) {
+                            s.reasons = rawReasons.mapNotNull { it?.toString() }
+                        }
+                        s.updated_at = ev.timestamp
+                    }
+                    val chat = (ev.payload["chat_title"] as? String) ?: s?.chat_title
+                    val snd = (ev.payload["sender"] as? String) ?: s?.sender
+                    val fromLane = (ev.payload["from_lane"] as? String) ?: s?.lane?.name
+                    priorEvents.add(PriorUpdateEvent(type = "moved_lane", chatTitle = chat, sender = snd, fromLane = fromLane, toLane = toLaneStr))
+                }
+
+                "event_ignored" -> {
+                    ignoreCounter++
                 }
 
                 "event_cancelled" -> {
@@ -195,6 +249,13 @@ object ProjectionEngine {
             }
         }
 
-        return ProjectedState(visibleSchedules, visibleReminders)
+        val learned = PriorCalculator.computePriors(priorEvents)
+        return ProjectedState(
+            schedules = visibleSchedules,
+            reminders = visibleReminders,
+            chatPriors = learned.chatPriors,
+            senderPriors = learned.senderPriors,
+            ignoreCount = ignoreCounter
+        )
     }
 }

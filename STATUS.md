@@ -1,5 +1,68 @@
 # Project Status
 
+## Day 3 | 2026-10-21 | branch: day3-triage-wire
+
+### Done
+- **Soak 1 Audit Verification**: Confirmed summary messages filtered, no crashes during soak.
+- **Triage Pipeline & Lane Routing**:
+  - Wired `DefaultSignalScorer` and `DefaultLaneClassifier` into [IngestionPipeline.kt](file:///c:/prompts/ai_agent/android/app/src/main/java/com/scheduleassistant/app/engine/IngestionPipeline.kt).
+  - Routed incoming messages into 3 lanes:
+    - `SCHEDULE`: Concrete time found -> suggestion card (`PENDING`) with reason chips (`⏰ Time found`, `⚡ Urgent`, etc.).
+    - `NEEDS_ATTENTION`: Time-unspecified notices, notices with deadline but no start, or ambiguous times -> placed in Needs Attention inbox with zero alarms scheduled.
+    - `IGNORE`: Noise, casual chat, OTPs, promotional spam -> recorded with `event_ignored`, incrementing `ignoreCount` counter; zero cards created.
+  - Enforced strict invariant: Ambiguous or time-unspecified items NEVER create normal suggestions; they fall back to `NEEDS_ATTENTION` with zero alarms scheduled.
+- **Event-Sourced Learned Priors Engine**:
+  - Implemented pure Kotlin [PriorCalculator.kt](file:///c:/prompts/ai_agent/android/app/src/main/java/com/scheduleassistant/app/domain/PriorCalculator.kt) with zero `android.*` imports.
+  - Bounded in $[-1.0, +1.0]$, fully reversible, event-sourced.
+  - User actions update priors deterministically: Confirm (`+0.20`), Dismiss (`-0.20`), Move Lane shifts weight (`+0.30` to Schedule, `-0.15` to Attention, `-0.30` to Ignore).
+  - Learned priors feed back into `SignalScorer` for dynamic scoring bias.
+  - Updated [ProjectionEngine.kt](file:///c:/prompts/ai_agent/android/app/src/main/java/com/scheduleassistant/app/data/projection/ProjectionEngine.kt) to project `chatPriors`, `senderPriors`, and `ignoreCount` on the fly.
+- **Needs Attention UI & Reason Chips**:
+  - Added filter tabs in Pending tab: `All`, `Suggestions`, `Needs Attention`.
+  - Added `ReasonChip` badges on cards: `⏰ Time found`, `⚡ Urgent`, `⚠️ Action needed`, `🔗 Link enclosed`, `📎 Document enclosed`.
+  - Specialized actions for Needs Attention: "Add Time", "Confirm (No Alert)", "Dismiss", plus "Move to Suggestions".
+- **Daily Digest Notification**:
+  - Implemented [DailyDigestNotifier.kt](file:///c:/prompts/ai_agent/android/app/src/main/java/com/scheduleassistant/app/service/DailyDigestNotifier.kt) on `"daily_digest"` channel.
+  - Summarizes today's confirmed events and inbox items needing attention.
+  - Added "Dispatch Test Daily Digest" button in Developer Dashboard Tools.
+- **Muted-Chat Warning Banner**:
+  - Added prominent `WarningBanner` in `DiagnosticsScreen` highlighting that muted/archived chats do not post Android status-bar notifications and cannot be captured.
+- **Developer Console Priors View**:
+  - Added `PRIORS` tab in `DeveloperDashboardScreen` displaying chat priors, sender priors, qualitative bias indicators, and ignored message counters.
+- **Test Suites & Verification**:
+  - Built [TriageWiringAndPriorTest.kt](file:///c:/prompts/ai_agent/android/app/src/test/java/com/scheduleassistant/app/TriageWiringAndPriorTest.kt) (9 tests passing).
+  - Built [DailyDigestNotifierTest.kt](file:///c:/prompts/ai_agent/android/app/src/test/java/com/scheduleassistant/app/DailyDigestNotifierTest.kt) (5 tests passing).
+  - Verified [ArchitectureBoundaryTest.kt](file:///c:/prompts/ai_agent/android/app/src/test/java/com/scheduleassistant/app/ArchitectureBoundaryTest.kt) (3 tests passing with 0 boundary violations).
+- **Artifact Build**:
+  - Assembled debug APK (18.79 MB) at `C:\Users\samsung\Downloads\ScheduleAssistant-debug.apk`.
+
+### In Progress
+- Owner verification of Device Checks DC-10 and DC-11 on device.
+
+### Blocked
+- None.
+
+### Test Counts (HTML Reports)
+- **Android JVM Unit Tests**: 81 passed, 0 failures, 0 ignored across 14 test classes ([index.html](file:///c:/prompts/ai_agent/android/app/build/reports/tests/testDebugUnitTest/index.html)).
+- **Laptop Vitest Suites**: 33 passed, 0 failures across 11 test files.
+- **Total Tests**: 114 passed, 0 failures (100% success rate).
+- **Architecture Boundary**: Verified pure Kotlin in `domain/` with 0 `android.*` imports.
+- **APK Size**: 18.79 MB (18,798,126 bytes) at `C:\Users\samsung\Downloads\ScheduleAssistant-debug.apk`.
+
+### Device Checks Pending (Owner)
+- [ ] **DC-10: Lane Routing Verification**: Send a notice with a concrete time (routes to Suggestions) vs a notice with no time (routes to Needs Attention) (needs owner verification).
+- [ ] **DC-11: Needs Attention Invariant**: Verify time-unspecified item produces zero alarms and zero reminders (needs owner verification).
+- [ ] **DC-12: Muted Chat Visibility**: Verify muted chat warning appears prominently in Diagnostics (needs owner verification).
+- [ ] **DC-13: Daily Digest Notification**: Dispatch test daily digest from Developer Tools and verify alert pops up with correct summary counts (needs owner verification).
+
+### Known Issues
+- None.
+
+### Cut Decisions
+- None.
+
+---
+
 ## Day 2 | 2026-10-19 | branch: day2-triage
 
 ### Done

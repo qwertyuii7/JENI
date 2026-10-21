@@ -517,3 +517,64 @@ fun AttributionMark(
     }
 }
 
+/**
+ * Reusable warning banner with icon, title, description, and optional action.
+ */
+@Composable
+fun WarningBanner(
+    title: String,
+    message: String,
+    modifier: Modifier = Modifier,
+    icon: ImageVector = Icons.Default.Warning,
+    bannerColor: Color = Warning,
+    actionText: String? = null,
+    onActionClick: (() -> Unit)? = null
+) {
+    Surface(
+        color = bannerColor.copy(alpha = 0.12f),
+        shape = RoundedCornerShape(12.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, bannerColor.copy(alpha = 0.35f)),
+        modifier = modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = bannerColor,
+                    modifier = Modifier.size(18.dp)
+                )
+                Text(
+                    text = title,
+                    color = bannerColor,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Text(
+                text = message,
+                color = TextLight,
+                fontSize = 12.sp,
+                lineHeight = 17.sp
+            )
+            if (actionText != null && onActionClick != null) {
+                Text(
+                    text = actionText,
+                    color = bannerColor,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .clickable { onActionClick() }
+                        .padding(vertical = 2.dp)
+                )
+            }
+        }
+    }
+}
+

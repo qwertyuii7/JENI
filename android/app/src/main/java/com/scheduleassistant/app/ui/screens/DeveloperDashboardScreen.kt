@@ -40,6 +40,7 @@ import com.scheduleassistant.app.data.diagnostics.DiagnosticsManager
 import com.scheduleassistant.app.data.model.ExtractionOutput
 import com.scheduleassistant.app.data.model.SyncEvent
 import com.scheduleassistant.app.service.AlarmScheduler
+import com.scheduleassistant.app.service.DailyDigestNotifier
 import com.scheduleassistant.app.ui.components.*
 import com.scheduleassistant.app.ui.theme.*
 import kotlinx.coroutines.Dispatchers
@@ -52,6 +53,9 @@ import java.util.*
 fun DeveloperDashboardScreen(
     onNavigateBack: () -> Unit,
     syncEvents: List<SyncEvent>,
+    chatPriors: Map<String, Double> = emptyMap(),
+    senderPriors: Map<String, Double> = emptyMap(),
+    ignoreCount: Int = 0,
     onInjectMessage: (String) -> Unit = {},
     lastExtracted: ExtractionOutput? = null,
     onDeleteAllTestItems: (() -> Unit)? = null
@@ -205,6 +209,7 @@ fun DeveloperDashboardScreen(
                         "HEALTH" to "Health",
                         "LOGS" to "Logs",
                         "AUDITS" to "Audits",
+                        "PRIORS" to "Priors",
                         "INJECTOR" to "Injector",
                         "UTILITIES" to "Tools"
                     )
@@ -273,6 +278,11 @@ fun DeveloperDashboardScreen(
                     }
                 )
                 "AUDITS" -> AuditsSection(context = context)
+                "PRIORS" -> PriorsSection(
+                    chatPriors = chatPriors,
+                    senderPriors = senderPriors,
+                    ignoreCount = ignoreCount
+                )
                 "INJECTOR" -> InjectorSection(
                     onInjectMessage = onInjectMessage,
                     lastExtracted = lastExtracted
@@ -856,6 +866,230 @@ private fun AuditsSection(context: Context) {
 }
 
 @Composable
+private fun PriorsSection(
+    chatPriors: Map<String, Double>,
+    senderPriors: Map<String, Double>,
+    ignoreCount: Int
+) {
+    var searchQuery by remember { mutableStateOf("") }
+
+    val filteredChatPriors = remember(chatPriors, searchQuery) {
+        if (searchQuery.isBlank()) chatPriors.toList()
+        else chatPriors.filter { it.key.contains(searchQuery, ignoreCase = true) }.toList()
+    }.sortedByDescending { it.second }
+
+    val filteredSenderPriors = remember(senderPriors, searchQuery) {
+        if (searchQuery.isBlank()) senderPriors.toList()
+        else senderPriors.filter { it.key.contains(searchQuery, ignoreCase = true) }.toList()
+    }.sortedByDescending { it.second }
+
+    LazyColumn(
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+        modifier = Modifier.fillMaxSize()
+    ) {
+        item {
+            SectionHeader(title = "Learned Triage Priors")
+            SleekCard {
+                Text(
+                    text = "Source-specific weights learned deterministically from user interactions. Confirm adds +0.20, Dismiss subtracts -0.20, and Move Lane shifts weight. Priors are bounded in [-1.0, +1.0] and reversible.",
+                    color = TextMuted,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Surface(
+                        color = CardElevated,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "${chatPriors.size}",
+                                color = Primary,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text("Chat Priors", color = TextMuted, fontSize = 11.sp)
+                        }
+                    }
+                    Surface(
+                        color = CardElevated,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "${senderPriors.size}",
+                                color = Accent,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text("Sender Priors", color = TextMuted, fontSize = 11.sp)
+                        }
+                    }
+                    Surface(
+                        color = CardElevated,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "$ignoreCount",
+                                color = Warning,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text("Ignored Count", color = TextMuted, fontSize = 11.sp)
+                        }
+                    }
+                }
+            }
+        }
+
+        if (chatPriors.isNotEmpty() || senderPriors.isNotEmpty()) {
+            item {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("Filter chats or senders...", color = TextMuted, fontSize = 12.sp) },
+                    singleLine = true,
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = TextMuted, modifier = Modifier.size(16.dp)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = TextLight,
+                        unfocusedTextColor = TextLight,
+                        focusedBorderColor = Primary,
+                        unfocusedBorderColor = CardBorder,
+                        focusedContainerColor = CardBg,
+                        unfocusedContainerColor = CardBg
+                    )
+                )
+            }
+        }
+
+        item {
+            SectionHeader(title = "Chat Priors (${filteredChatPriors.size})")
+        }
+
+        if (filteredChatPriors.isEmpty()) {
+            item {
+                Text(
+                    text = if (chatPriors.isEmpty()) "No chat priors learned yet. Confirm or dismiss events to train priors." else "No chats match current filter.",
+                    color = TextMuted,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(vertical = 4.dp)
+                )
+            }
+        } else {
+            items(filteredChatPriors, key = { "chat_${it.first}" }) { (chatTitle, prior) ->
+                PriorEntryCard(
+                    title = chatTitle,
+                    prior = prior,
+                    badgeLabel = "CHAT"
+                )
+            }
+        }
+
+        item {
+            SectionHeader(title = "Sender Priors (${filteredSenderPriors.size})")
+        }
+
+        if (filteredSenderPriors.isEmpty()) {
+            item {
+                Text(
+                    text = if (senderPriors.isEmpty()) "No sender priors learned yet." else "No senders match current filter.",
+                    color = TextMuted,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(vertical = 4.dp)
+                )
+            }
+        } else {
+            items(filteredSenderPriors, key = { "sender_${it.first}" }) { (sender, prior) ->
+                PriorEntryCard(
+                    title = sender,
+                    prior = prior,
+                    badgeLabel = "SENDER"
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PriorEntryCard(
+    title: String,
+    prior: Double,
+    badgeLabel: String
+) {
+    val formattedPrior = String.format(Locale.US, "%+.2f", prior)
+    val (pillColor, pillBg) = when {
+        prior > 0.05 -> Success to SuccessBg
+        prior < -0.05 -> Danger to DangerBg
+        else -> TextMuted to CardElevated
+    }
+    val qualitativeBias = when {
+        prior > 0.35 -> "Strong Schedule Bias"
+        prior > 0.05 -> "Favors Schedule"
+        prior < -0.35 -> "Strong Ignore Bias"
+        prior < -0.05 -> "Favors Attention/Ignore"
+        else -> "Neutral Weight"
+    }
+
+    SleekCard {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    StatusPill(
+                        text = badgeLabel,
+                        color = Primary,
+                        backgroundColor = Primary.copy(alpha = 0.15f)
+                    )
+                    Text(
+                        text = title,
+                        color = TextLight,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        maxLines = 1
+                    )
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = qualitativeBias,
+                    color = TextMuted,
+                    fontSize = 11.sp
+                )
+            }
+
+            StatusPill(
+                text = formattedPrior,
+                color = pillColor,
+                backgroundColor = pillBg
+            )
+        }
+    }
+}
+
+@Composable
 private fun UtilitiesSection(
     context: Context,
     syncEvents: List<SyncEvent>,
@@ -901,6 +1135,29 @@ private fun UtilitiesSection(
         verticalArrangement = Arrangement.spacedBy(14.dp),
         modifier = Modifier.fillMaxSize()
     ) {
+        item {
+            SectionHeader(title = "Daily Digest Notification Test")
+            SleekCard {
+                Text(
+                    text = "Dispatch the 8:00 AM Daily Digest notification on demand. The digest tallies today's confirmed schedules and all pending items requiring attention in the Inbox.",
+                    color = TextMuted,
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                SleekOutlinedButton(
+                    text = "Dispatch Test Daily Digest",
+                    icon = Icons.Default.FactCheck,
+                    onClick = {
+                        coroutineScope.launch {
+                            val digest = DailyDigestNotifier.checkAndDispatchDigest(context)
+                            Toast.makeText(context, "Digest dispatched: ${digest.summaryText}", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                )
+            }
+        }
+
         item {
             SectionHeader(title = "Test Notification & Alerting")
             SleekCard {
