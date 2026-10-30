@@ -27,6 +27,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -43,6 +45,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.scheduleassistant.app.data.model.ExtractionOutput
@@ -53,15 +56,20 @@ import com.scheduleassistant.app.data.diagnostics.DeveloperModeManager
 import com.scheduleassistant.app.data.diagnostics.DeveloperTapResult
 import com.scheduleassistant.app.ui.components.*
 import com.scheduleassistant.app.ui.theme.*
+import com.scheduleassistant.app.voice.VoiceSecretaryManager
+import com.scheduleassistant.app.voice.VoiceStatus
 import android.widget.Toast
 
 @Composable
 fun HomeScreen(
     schedules: List<ScheduleEntity>,
     reminders: List<com.scheduleassistant.app.data.model.ReminderEntity> = emptyList(),
+    chatPreferences: List<com.scheduleassistant.app.data.db.ChatPreferenceEntity> = emptyList(),
     isListenerConnected: Boolean = true,
     onNavigateToPending: () -> Unit,
     onNavigateToDebug: () -> Unit,
+    onNavigateToChatManagement: () -> Unit = {},
+    onToggleChatMute: (String, Boolean) -> Unit = { _, _ -> },
     onDelete: (String) -> Unit = {},
     onRestore: (String) -> Unit = {},
     onEdit: (String, String, String?, Boolean) -> Unit = { _, _, _, _ -> }
@@ -72,9 +80,18 @@ fun HomeScreen(
     var isLogOnlyMode by remember { mutableStateOf(DiagnosticsManager.isLogOnlyMode(context)) }
     val canUseFsi = DiagnosticsManager.canUseFullScreenIntent(context)
     var showFirstRunPrompt by remember { mutableStateOf(!DiagnosticsManager.isFirstRunPromptShown(context)) }
+    var showVoiceDialog by remember { mutableStateOf(false) }
+    var isOemBannerDismissed by remember { mutableStateOf(false) }
 
     val pendingCount = schedules.count { it.status == ScheduleStatus.PENDING }
     val confirmedCount = schedules.count { it.status == ScheduleStatus.CONFIRMED }
+
+    if (showVoiceDialog) {
+        VoiceSecretaryDialog(
+            schedules = schedules,
+            onDismiss = { showVoiceDialog = false }
+        )
+    }
 
     if (showFirstRunPrompt) {
         AlertDialog(
@@ -83,33 +100,54 @@ fun HomeScreen(
                 showFirstRunPrompt = false
             },
             title = {
-                Text("Log-Only Mode Active", color = TextLight, fontWeight = FontWeight.Bold)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("👋", fontSize = 20.sp)
+                    Text("Welcome to Schedule Assistant", color = TextLight, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                }
             },
             text = {
-                Text(
-                    "Log-Only mode is enabled by default after installation.\n\n" +
-                    "While Log-Only mode is ON, Schedule Assistant captures and evaluates WhatsApp notifications for diagnostic audit, but will NOT create alerts or ring alarms.\n\n" +
-                    "You can disable Log-Only mode anytime in Diagnostics & Soak Audit.",
-                    color = TextMuted,
-                    fontSize = 14.sp
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Your quiet personal secretary that turns messy WhatsApp notices into clear calendar reminders and alarms.",
+                        color = TextLight,
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp
+                    )
+                    Surface(
+                        color = CardElevated,
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, CardBorderSubtle)
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("🔒 100% On-Device & Private", color = Success, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text("Your WhatsApp messages never leave your phone. Zero servers, zero tracking.", color = TextMuted, fontSize = 11.sp)
+                            Spacer(Modifier.height(2.dp))
+                            Text("🎙️ ElevenLabs Voice Secretary", color = Accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text("Ask \"What's my schedule today?\" anytime to hear your agenda.", color = TextMuted, fontSize = 11.sp)
+                        }
+                    }
+                }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    DiagnosticsManager.setFirstRunPromptShown(context, true)
-                    showFirstRunPrompt = false
-                }) {
-                    Text("Got It", color = Primary)
+                Button(
+                    onClick = {
+                        DiagnosticsManager.setFirstRunPromptShown(context, true)
+                        DiagnosticsManager.setLogOnlyMode(context, false)
+                        isLogOnlyMode = false
+                        showFirstRunPrompt = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Primary),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text("Get Started", color = Color.White, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = {
                     DiagnosticsManager.setFirstRunPromptShown(context, true)
-                    DiagnosticsManager.setLogOnlyMode(context, false)
-                    isLogOnlyMode = false
                     showFirstRunPrompt = false
                 }) {
-                    Text("Turn OFF", color = TextMuted)
+                    Text("Silent Test Mode", color = TextMuted)
                 }
             },
             containerColor = CardBg
@@ -149,6 +187,137 @@ fun HomeScreen(
                 )
             }
 
+            // Voice Secretary Interactive Hero Card & Chat Privacy Pill
+            item {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = CardBg,
+                    border = BorderStroke(1.dp, CardBorder),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(38.dp)
+                                        .clip(CircleShape)
+                                        .background(Primary.copy(alpha = 0.2f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text("🎙️", fontSize = 18.sp)
+                                }
+                                Column {
+                                    Text(
+                                        text = "Voice Secretary",
+                                        color = TextLight,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 15.sp
+                                    )
+                                    Text(
+                                        text = "ElevenLabs · Tap to ask or listen",
+                                        color = TextMuted,
+                                        fontSize = 12.sp
+                                    )
+                                }
+                            }
+
+                            // 100% Private Badge
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = SuccessBg,
+                                border = BorderStroke(1.dp, Success.copy(alpha = 0.3f))
+                            ) {
+                                Text(
+                                    text = "🔒 100% Private",
+                                    color = Success,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+
+                        // Action Buttons: Ask Secretary (Mic) & Brief Me
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Button(
+                                onClick = { showVoiceDialog = true },
+                                colors = ButtonDefaults.buttonColors(containerColor = Primary),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .defaultMinSize(minHeight = 44.dp)
+                            ) {
+                                Icon(Icons.Default.Mic, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Ask Secretary", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            }
+
+                            OutlinedButton(
+                                onClick = {
+                                    val answer = VoiceSecretaryManager.buildScheduleAnswer("today", schedules)
+                                    VoiceSecretaryManager.speak(context, answer)
+                                    Toast.makeText(context, "Speaking today's schedule...", Toast.LENGTH_SHORT).show()
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                border = BorderStroke(1.dp, CardBorder),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = TextLight),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .defaultMinSize(minHeight = 44.dp)
+                            ) {
+                                Icon(Icons.Default.VolumeUp, contentDescription = null, tint = Accent, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Brief Me", color = TextLight, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+
+                        // WhatsApp Chat Privacy Quick Link
+                        Surface(
+                            onClick = { onNavigateToChatManagement() },
+                            shape = RoundedCornerShape(8.dp),
+                            color = CardElevated,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text("💬", fontSize = 13.sp)
+                                    Text(
+                                        text = "WhatsApp Chat Privacy & Muting",
+                                        color = TextLight,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                                Icon(Icons.Default.ChevronRight, contentDescription = null, tint = TextMuted, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+                }
+            }
+
             // Status & warning banners in plain, friendly language
             if (isLogOnlyMode) {
                 item {
@@ -176,14 +345,14 @@ fun HomeScreen(
             if (!canUseFsi) {
                 item {
                     SleekCard(
-                        backgroundColor = DangerBg,
-                        borderColor = Danger.copy(alpha = 0.4f),
+                        backgroundColor = WarningBg,
+                        borderColor = Warning.copy(alpha = 0.4f),
                         cornerRadius = 14
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Warning, contentDescription = null, tint = Danger, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.Alarm, contentDescription = null, tint = Warning, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("Lock Screen Alarms", color = Danger, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text("Lock Screen Alarms", color = Warning, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                         }
                         Spacer(Modifier.height(4.dp))
                         Text(
@@ -193,8 +362,11 @@ fun HomeScreen(
                             lineHeight = 16.sp
                         )
                         Spacer(Modifier.height(10.dp))
-                        SleekDangerButton(
+                        SleekPrimaryButton(
                             text = "Allow Lock Screen Alarms",
+                            icon = Icons.Default.Alarm,
+                            containerColor = Warning,
+                            contentColor = Color.Black,
                             onClick = {
                                 val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                                     Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
@@ -215,14 +387,14 @@ fun HomeScreen(
             if (!isListenerConnected) {
                 item {
                     SleekCard(
-                        backgroundColor = DangerBg,
-                        borderColor = Danger.copy(alpha = 0.4f),
+                        backgroundColor = WarningBg,
+                        borderColor = Warning.copy(alpha = 0.4f),
                         cornerRadius = 14
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Error, contentDescription = null, tint = Danger, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.NotificationsActive, contentDescription = null, tint = Warning, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("WhatsApp Access Needed", color = Danger, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text("WhatsApp Access Needed", color = Warning, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                         }
                         Spacer(Modifier.height(4.dp))
                         Text(
@@ -232,47 +404,107 @@ fun HomeScreen(
                             lineHeight = 16.sp
                         )
                         Spacer(Modifier.height(10.dp))
-                        SleekDangerButton(
-                            text = "Turn On in Settings",
-                            onClick = {
-                                context.startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            SleekPrimaryButton(
+                                text = "Turn On in Settings",
+                                icon = Icons.Default.Check,
+                                containerColor = Primary,
+                                contentColor = Color.White,
+                                modifier = Modifier.weight(1f),
+                                onClick = {
+                                    context.startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
+                                }
+                            )
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                SleekOutlinedButton(
+                                    text = "Restricted?",
+                                    borderColor = CardBorderSubtle,
+                                    contentColor = TextMuted,
+                                    onClick = {
+                                        com.scheduleassistant.app.util.OemHelper.openAppDetailsSettings(context)
+                                    }
+                                )
                             }
-                        )
+                        }
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                "💡 If switch is greyed out: tap 'Restricted?' above -> tap 3 dots (⋮) top right -> 'Allow restricted settings'",
+                                color = TextMuted,
+                                fontSize = 11.sp,
+                                lineHeight = 14.sp
+                            )
+                        }
                     }
                 }
             }
 
-            if (!isIgnoringBatteryOptimizations) {
+            val brand = com.scheduleassistant.app.util.OemHelper.currentBrand
+            val hasAutostart = com.scheduleassistant.app.util.OemHelper.hasDedicatedAutostart
+            val shouldShowOemBanner = !isOemBannerDismissed && !isIgnoringBatteryOptimizations
+
+            if (shouldShowOemBanner) {
                 item {
                     SleekCard(
                         backgroundColor = WarningBg,
                         borderColor = Warning.copy(alpha = 0.4f),
                         cornerRadius = 14
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Warning, contentDescription = null, tint = Warning, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("Keep Reminders Active", color = Warning, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Warning, contentDescription = null, tint = Warning, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    if (hasAutostart) "${brand.displayName} Background Protection" else "Keep Reminders Active",
+                                    color = Warning,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp
+                                )
+                            }
+                            IconButton(onClick = { isOemBannerDismissed = true }, modifier = Modifier.size(24.dp)) {
+                                Icon(Icons.Default.Close, contentDescription = "Dismiss", tint = TextMuted, modifier = Modifier.size(16.dp))
+                            }
                         }
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            "Allow background activity so your schedule reminders and alarms ring reliably even when your phone is idle.",
+                            if (hasAutostart) {
+                                "${brand.oemSkin} aggressively closes background apps. Allow autostart and disable battery optimization so schedule reminders ring reliably."
+                            } else {
+                                "Allow background battery activity so your schedule reminders and alarms ring reliably even when your phone is asleep."
+                            },
                             color = TextLight,
                             fontSize = 12.sp,
                             lineHeight = 16.sp
                         )
                         Spacer(Modifier.height(10.dp))
-                        SleekOutlinedButton(
-                            text = "Allow Background Activity",
-                            borderColor = Warning,
-                            contentColor = Warning,
-                            onClick = {
-                                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                                    data = Uri.parse("package:${context.packageName}")
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            SleekPrimaryButton(
+                                text = "Allow Background Activity",
+                                icon = Icons.Default.Check,
+                                containerColor = Primary,
+                                contentColor = Color.White,
+                                onClick = {
+                                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                                        data = Uri.parse("package:${context.packageName}")
+                                    }
+                                    context.startActivity(intent)
                                 }
-                                context.startActivity(intent)
+                            )
+                            if (hasAutostart) {
+                                SleekOutlinedButton(
+                                    text = "Configure ${brand.displayName} Autostart",
+                                    borderColor = CardBorderSubtle,
+                                    contentColor = TextLight,
+                                    onClick = {
+                                        com.scheduleassistant.app.util.OemHelper.openAutostartSettings(context)
+                                    }
+                                )
                             }
-                        )
+                        }
                     }
                 }
             }
@@ -335,6 +567,96 @@ fun HomeScreen(
                         onDelete = onDelete,
                         onEdit = onEdit
                     )
+                }
+            }
+
+            // ── Discovered WhatsApp Chats & Muting ───────────────────────────
+            item {
+                SectionHeader(title = "Discovered WhatsApp Chats (${chatPreferences.size})")
+            }
+
+            if (chatPreferences.isEmpty()) {
+                item {
+                    SleekCard(
+                        backgroundColor = CardBg,
+                        borderColor = CardBorderSubtle,
+                        cornerRadius = 14
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text("💬", fontSize = 22.sp)
+                            Column {
+                                Text("No Chats Discovered Yet", color = TextLight, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    "When WhatsApp messages arrive, the chat name will appear here automatically with a simple switch to enable or disable listening.",
+                                    color = TextMuted,
+                                    fontSize = 12.sp,
+                                    lineHeight = 16.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            } else {
+                items(chatPreferences.take(5), key = { it.chatTitle }) { pref ->
+                    SleekCard(
+                        backgroundColor = if (pref.isMuted) CardBg.copy(alpha = 0.6f) else CardBg,
+                        borderColor = if (pref.isMuted) Danger.copy(alpha = 0.2f) else CardBorderSubtle,
+                        cornerRadius = 14
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Text(if (pref.isMuted) "🔕" else "💬", fontSize = 18.sp)
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = pref.chatTitle,
+                                        color = if (pref.isMuted) TextMuted else TextLight,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = if (pref.isMuted) "Listening Disabled (Ignored)" else "Listening Active (Detects schedules)",
+                                        color = if (pref.isMuted) Danger else Success,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
+                            Switch(
+                                checked = !pref.isMuted,
+                                onCheckedChange = { isListening ->
+                                    onToggleChatMute(pref.chatTitle, !isListening)
+                                },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = TextLight,
+                                    checkedTrackColor = Primary,
+                                    uncheckedThumbColor = Danger,
+                                    uncheckedTrackColor = Danger.copy(alpha = 0.3f)
+                                )
+                            )
+                        }
+                    }
+                }
+
+                if (chatPreferences.size > 5) {
+                    item {
+                        SleekOutlinedButton(
+                            text = "Manage All ${chatPreferences.size} Chats & Priorities →",
+                            borderColor = Primary.copy(alpha = 0.5f),
+                            contentColor = Primary,
+                            onClick = onNavigateToChatManagement
+                        )
+                    }
                 }
             }
 
@@ -632,24 +954,43 @@ fun ConfirmedScheduleCard(
     ) {
         Card(
             colors = CardDefaults.cardColors(containerColor = CardBg),
-            shape = RoundedCornerShape(12.dp),
+            shape = RoundedCornerShape(16.dp),
+            border = BorderStroke(1.dp, CardBorder),
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.Top
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(item.title, fontWeight = FontWeight.Bold, color = TextLight, fontSize = 16.sp)
-                        Spacer(Modifier.height(4.dp))
                         Text(
-                            text = formatFriendlyDateTime(item.start, item.end, item.start_date),
-                            fontWeight = FontWeight.SemiBold,
-                            color = Accent,
-                            fontSize = 14.sp
+                            text = item.title,
+                            fontWeight = FontWeight.Bold,
+                            color = TextLight,
+                            fontSize = 16.sp,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
                         )
+                        Spacer(Modifier.height(4.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Event,
+                                contentDescription = null,
+                                tint = Accent,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Text(
+                                text = formatFriendlyDateTime(item.start, item.end, item.start_date),
+                                fontWeight = FontWeight.SemiBold,
+                                color = Accent,
+                                fontSize = 13.sp
+                            )
+                        }
                         val noAlertReason = getNoAlertScheduledReason(item, reminders)
                         if (noAlertReason != null) {
                             val friendlyReason = when (noAlertReason) {
@@ -658,13 +999,14 @@ fun ConfirmedScheduleCard(
                                 "invalid time format" -> "Please adjust time"
                                 else -> noAlertReason
                             }
-                            Spacer(Modifier.height(4.dp))
+                            Spacer(Modifier.height(6.dp))
                             Surface(
                                 color = DangerBg,
-                                shape = RoundedCornerShape(4.dp)
+                                shape = RoundedCornerShape(6.dp),
+                                border = BorderStroke(1.dp, Danger.copy(alpha = 0.3f))
                             ) {
                                 Row(
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
@@ -677,20 +1019,37 @@ fun ConfirmedScheduleCard(
                             }
                         }
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = { showEditDialog = true }) {
-                            Icon(Icons.Default.Edit, contentDescription = "Edit", tint = Accent)
+                    Spacer(Modifier.width(10.dp))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(
+                            onClick = { showEditDialog = true },
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(CircleShape)
+                                .background(CardElevated)
+                        ) {
+                            Icon(Icons.Default.Edit, contentDescription = "Edit", tint = Accent, modifier = Modifier.size(15.dp))
                         }
-                        IconButton(onClick = { showDeleteConfirmDialog = true }) {
-                            Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Danger)
+                        IconButton(
+                            onClick = { showDeleteConfirmDialog = true },
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(CircleShape)
+                                .background(DangerBg.copy(alpha = 0.35f))
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Danger, modifier = Modifier.size(15.dp))
                         }
                     }
                 }
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(8.dp))
                 Text(
                     text = "\"${item.source_quote}\"",
                     color = TextMuted,
                     fontSize = 12.sp,
+                    lineHeight = 16.sp,
                     fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
                 )
             }
@@ -821,7 +1180,8 @@ fun PendingItemCard(
 
     Card(
         colors = CardDefaults.cardColors(containerColor = CardBg),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, CardBorder),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -829,66 +1189,116 @@ fun PendingItemCard(
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.Top
             ) {
-                Text(item.title, fontWeight = FontWeight.Bold, color = TextLight, fontSize = 17.sp, modifier = Modifier.weight(1f, fill = false))
-                Spacer(Modifier.width(8.dp))
-                StatusPill(
-                    text = if (item.ambiguous) "Needs Time Choice" else if (isAttention) "Needs Attention" else "Suggested Plan",
-                    color = if (isAttention) Warning else Primary,
-                    backgroundColor = if (isAttention) WarningBg else Primary.copy(alpha = 0.15f)
-                )
-            }
-
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = formatFriendlyDateTime(item.start, item.end, item.start_date),
-                fontWeight = FontWeight.SemiBold,
-                color = Accent,
-                fontSize = 14.sp
-            )
-
-            Spacer(Modifier.height(8.dp))
-            // Human-friendly chat bubble quote
-            Surface(
-                color = CardElevated,
-                shape = RoundedCornerShape(8.dp),
-                border = BorderStroke(1.dp, CardBorderSubtle),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier.padding(10.dp),
-                    verticalAlignment = Alignment.Top,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.ChatBubbleOutline,
-                        contentDescription = null,
-                        tint = PrimaryLight,
-                        modifier = Modifier.size(15.dp).padding(top = 2.dp)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = item.title,
+                        fontWeight = FontWeight.Bold,
+                        color = TextLight,
+                        fontSize = 17.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
-                    Column {
-                        Text(
-                            text = "\"${item.source_quote}\"",
-                            color = TextLight,
-                            fontSize = 13.sp,
-                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                    Spacer(Modifier.height(4.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (item.time_unspecified) Icons.Default.EventNote else Icons.Default.Schedule,
+                            contentDescription = null,
+                            tint = Accent,
+                            modifier = Modifier.size(15.dp)
                         )
-                        Spacer(Modifier.height(2.dp))
                         Text(
-                            text = "Detected from WhatsApp message",
-                            color = TextSubtle,
-                            fontSize = 10.sp
+                            text = formatFriendlyDateTime(item.start, item.end, item.start_date),
+                            fontWeight = FontWeight.SemiBold,
+                            color = Accent,
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+                Spacer(Modifier.width(10.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    StatusPill(
+                        text = if (item.ambiguous) "Needs Time" else if (isAttention) "Attention" else "Suggested",
+                        color = if (isAttention) Warning else Primary,
+                        backgroundColor = if (isAttention) WarningBg else Primary.copy(alpha = 0.15f)
+                    )
+                    // 1-Tap Quick Dismiss shortcut
+                    IconButton(
+                        onClick = { onDismiss(item.id) },
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .background(CardElevated)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Dismiss",
+                            tint = TextMuted,
+                            modifier = Modifier.size(15.dp)
                         )
                     }
                 }
             }
 
-            // Reason Chips
+            Spacer(Modifier.height(10.dp))
+            // Human-friendly chat bubble quote
+            Surface(
+                color = CardElevated,
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, CardBorderSubtle),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.Top,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(24.dp)
+                            .clip(CircleShape)
+                            .background(Primary.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ChatBubbleOutline,
+                            contentDescription = null,
+                            tint = PrimaryLight,
+                            modifier = Modifier.size(13.dp)
+                        )
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "\"${item.source_quote}\"",
+                            color = TextLight,
+                            fontSize = 13.sp,
+                            lineHeight = 17.sp,
+                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                        )
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            text = "Detected from WhatsApp message",
+                            color = TextSubtle,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+            }
+
+            // Reason Chips with horizontal scroll (prevents clipping)
             if (item.reasons.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     item.reasons.take(3).forEach { reason ->
@@ -925,15 +1335,15 @@ fun PendingItemCard(
             if (!item.time_unspecified && item.start != null) {
                 Spacer(Modifier.height(10.dp))
                 Surface(
-                    color = if (enableAlarm) WarningBg else CardBg,
+                    color = if (enableAlarm) WarningBg else CardElevated,
                     shape = RoundedCornerShape(10.dp),
-                    border = BorderStroke(1.dp, if (enableAlarm) Warning.copy(alpha = 0.5f) else CardBorder),
+                    border = BorderStroke(1.dp, if (enableAlarm) Warning.copy(alpha = 0.45f) else CardBorder),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -944,6 +1354,7 @@ fun PendingItemCard(
                                 color = if (enableAlarm) Warning else TextLight,
                                 fontSize = 13.sp
                             )
+                            Spacer(Modifier.height(2.dp))
                             Text(
                                 text = if (enableAlarm) "Will ring aloud like an alarm clock" else "Gentle notification 15 minutes before",
                                 color = TextMuted,
@@ -955,7 +1366,9 @@ fun PendingItemCard(
                             onCheckedChange = { enableAlarm = it },
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = Color.White,
-                                checkedTrackColor = Warning
+                                checkedTrackColor = Warning,
+                                uncheckedThumbColor = TextMuted,
+                                uncheckedTrackColor = CardBorder
                             )
                         )
                     }
@@ -964,12 +1377,12 @@ fun PendingItemCard(
                 Spacer(Modifier.height(8.dp))
                 Surface(
                     color = WarningBg,
-                    shape = RoundedCornerShape(8.dp),
-                    border = BorderStroke(1.dp, Warning.copy(alpha = 0.25f)),
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, Warning.copy(alpha = 0.3f)),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
-                        modifier = Modifier.padding(10.dp),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
@@ -977,7 +1390,8 @@ fun PendingItemCard(
                         Text(
                             text = "No clock time specified. Add a time to schedule alerts, or confirm as a note.",
                             color = TextLight,
-                            fontSize = 12.sp
+                            fontSize = 12.sp,
+                            lineHeight = 16.sp
                         )
                     }
                 }
@@ -1003,7 +1417,7 @@ fun PendingItemCard(
 
                 Spacer(Modifier.height(10.dp))
                 Text("Which time did you mean?", color = Warning, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(6.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1011,58 +1425,135 @@ fun PendingItemCard(
                     Button(
                         onClick = { tryConfirm(item.start) },
                         colors = ButtonDefaults.buttonColors(containerColor = Primary),
-                        modifier = Modifier.weight(1f)
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .defaultMinSize(minHeight = 44.dp)
                     ) {
+                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(4.dp))
                         Text("Confirm $timeA", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     }
                     if (altIso != null && timeB != null) {
                         OutlinedButton(
                             onClick = { tryConfirm(altIso) },
                             border = BorderStroke(1.dp, CardBorder),
-                            modifier = Modifier.weight(1f)
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = TextLight),
+                            modifier = Modifier
+                                .weight(1f)
+                                .defaultMinSize(minHeight = 44.dp)
                         ) {
+                            Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Spacer(Modifier.width(4.dp))
                             Text("Confirm $timeB", color = TextLight, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         }
                     }
                 }
             }
 
-            Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // Two-Tier Action Buttons: Guarantees Zero Horizontal Overflow on Any Screen Size
+            Spacer(Modifier.height(14.dp))
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Tier 1: Prominent Primary Action
                 if (!item.ambiguous && item.start != null && !item.time_unspecified) {
                     Button(
                         onClick = { tryConfirm(null) },
-                        colors = ButtonDefaults.buttonColors(containerColor = Success)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .defaultMinSize(minHeight = 46.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Success,
+                            contentColor = Color.White
+                        )
                     ) {
-                        Text("Confirm", color = Color.White)
+                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(17.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Confirm Event", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                     }
-                } else if (item.time_unspecified) {
+                } else if (item.time_unspecified || item.start == null) {
                     Button(
                         onClick = { showEditDialog = true },
-                        colors = ButtonDefaults.buttonColors(containerColor = Primary)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .defaultMinSize(minHeight = 46.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Primary,
+                            contentColor = Color.White
+                        )
                     ) {
-                        Text("Add Time", color = Color.White)
-                    }
-                    OutlinedButton(
-                        onClick = { onConfirm(item.id, null, false) },
-                        border = BorderStroke(1.dp, CardBorder)
-                    ) {
-                        Text("Confirm (No Alert)", color = TextLight)
-                    }
-                }
-                if (!item.time_unspecified) {
-                    Button(
-                        onClick = { showEditDialog = true },
-                        colors = ButtonDefaults.buttonColors(containerColor = Accent)
-                    ) {
-                        Text("Edit Time", color = Color.White)
+                        Icon(Icons.Default.AccessTime, contentDescription = null, modifier = Modifier.size(17.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Add Time & Schedule", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                     }
                 }
-                Button(
-                    onClick = { onDismiss(item.id) },
-                    colors = ButtonDefaults.buttonColors(containerColor = Danger)
+
+                // Tier 2: Balanced 50/50 Secondary Actions (Never overflows)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text("Dismiss", color = Color.White)
+                    if (item.time_unspecified || item.start == null) {
+                        OutlinedButton(
+                            onClick = { onConfirm(item.id, null, false) },
+                            modifier = Modifier
+                                .weight(1f)
+                                .defaultMinSize(minHeight = 44.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, CardBorder),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                containerColor = CardElevated,
+                                contentColor = TextLight
+                            ),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp)
+                        ) {
+                            Icon(Icons.Default.BookmarkBorder, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Save Note", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        }
+                    } else {
+                        OutlinedButton(
+                            onClick = { showEditDialog = true },
+                            modifier = Modifier
+                                .weight(1f)
+                                .defaultMinSize(minHeight = 44.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, CardBorder),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                containerColor = CardElevated,
+                                contentColor = TextLight
+                            ),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp)
+                        ) {
+                            Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(if (item.ambiguous) "Custom Time" else "Edit Time", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+
+                    // Refined, calm danger Dismiss button (Subtle border & tint, never screams or overflows)
+                    OutlinedButton(
+                        onClick = { onDismiss(item.id) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .defaultMinSize(minHeight = 44.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, Danger.copy(alpha = 0.35f)),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = DangerBg.copy(alpha = 0.35f),
+                            contentColor = Danger
+                        ),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp)
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Dismiss", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    }
                 }
             }
         }
@@ -1109,9 +1600,11 @@ fun PendingScreen(
             )
             Spacer(Modifier.height(10.dp))
 
-            // Segment Tabs
+            // Segment Tabs with smooth horizontal scroll & comfortable pill shape
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Surface(
@@ -1125,7 +1618,7 @@ fun PendingScreen(
                         color = if (selectedSegment == "ALL") Color.White else TextMuted,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
                     )
                 }
 
@@ -1140,7 +1633,7 @@ fun PendingScreen(
                         color = if (selectedSegment == "SUGGESTIONS") Color.White else TextMuted,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
                     )
                 }
 
@@ -1155,7 +1648,7 @@ fun PendingScreen(
                         color = if (selectedSegment == "ATTENTION") Color.White else Warning,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
                     )
                 }
             }
@@ -1468,36 +1961,73 @@ fun AlertsScreen(
                 ) {
                     Card(
                         colors = CardDefaults.cardColors(containerColor = CardBg),
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(1.dp, CardBorder),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
-                            modifier = Modifier.padding(16.dp).fillMaxWidth(),
+                            modifier = Modifier
+                                .padding(16.dp)
+                                .fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        text = if (rem.type == "alarm") "⏰ Alarm (Rings aloud)" else "🔔 Reminder (15 min lead)",
-                                        fontWeight = FontWeight.Bold,
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    StatusPill(
+                                        text = if (rem.type == "alarm") "Alarm" else "Reminder",
                                         color = if (rem.type == "alarm") Warning else Accent,
-                                        fontSize = 12.sp
+                                        icon = if (rem.type == "alarm") Icons.Default.Alarm else Icons.Default.Notifications
+                                    )
+                                    StatusPill(
+                                        text = if (rem.status.name == "FIRED") "Triggered" else "Active",
+                                        color = if (rem.status.name == "FIRED") Success else Primary
                                     )
                                 }
-                                Text(rem.title, fontWeight = FontWeight.SemiBold, color = TextLight, fontSize = 16.sp)
-                                Text("Rings at: ${formatFriendlyDateTime(rem.trigger_time)}", color = TextLight, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                                Spacer(Modifier.height(6.dp))
+                                Text(
+                                    text = rem.title,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = TextLight,
+                                    fontSize = 15.sp,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    text = "Rings: ${formatFriendlyDateTime(rem.trigger_time)}",
+                                    color = TextMuted,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
                             }
 
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Badge(containerColor = if (rem.status.name == "FIRED") Success else Primary) {
-                                    Text(if (rem.status.name == "FIRED") "Triggered" else "Active", color = Color.White)
+                            Spacer(Modifier.width(10.dp))
+
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                IconButton(
+                                    onClick = { showEditDialog = true },
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clip(CircleShape)
+                                        .background(CardElevated)
+                                ) {
+                                    Icon(Icons.Default.Edit, contentDescription = "Edit", tint = Accent, modifier = Modifier.size(15.dp))
                                 }
-                                IconButton(onClick = { showEditDialog = true }) {
-                                    Icon(Icons.Default.Edit, contentDescription = "Edit", tint = Accent)
-                                }
-                                IconButton(onClick = { showDeleteConfirmDialog = true }) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Danger)
+                                IconButton(
+                                    onClick = { showDeleteConfirmDialog = true },
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clip(CircleShape)
+                                        .background(DangerBg.copy(alpha = 0.35f))
+                                ) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Danger, modifier = Modifier.size(15.dp))
                                 }
                             }
                         }
@@ -2822,7 +3352,8 @@ fun SettingsScreen(
     onDeveloperModeChanged: (Boolean) -> Unit = {},
     onNavigateToDevConsole: () -> Unit = {},
     onRequestNotificationPermission: () -> Unit = {},
-    onDeleteAllTestItems: () -> Unit = {}
+    onDeleteAllTestItems: () -> Unit = {},
+    onNavigateToChatManagement: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -2941,6 +3472,140 @@ fun SettingsScreen(
                             uncheckedTrackColor = CardElevated
                         )
                     )
+                }
+            }
+        }
+
+        // Section: Chat Management
+        item {
+            SectionHeader(title = "Chat Management")
+            SleekCard {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onNavigateToChatManagement() }
+                        .padding(vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Priority & Mute Settings", color = TextLight, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            "Control which chats feed the scheduler — mute noisy groups, prioritize important ones",
+                            color = TextMuted,
+                            fontSize = 12.sp,
+                            lineHeight = 16.sp
+                        )
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Icon(Icons.Default.ChevronRight, contentDescription = null, tint = TextMuted)
+                }
+            }
+        }
+
+        // Section: Voice Secretary (ElevenLabs)
+        item {
+            var voiceEnabled by remember { mutableStateOf(VoiceSecretaryManager.isVoiceEnabled(context)) }
+            var selectedVoiceId by remember { mutableStateOf(VoiceSecretaryManager.getSelectedVoiceId(context)) }
+            val currentVoice = remember(selectedVoiceId) {
+                VoiceSecretaryManager.AVAILABLE_VOICES.firstOrNull { it.id == selectedVoiceId } ?: VoiceSecretaryManager.AVAILABLE_VOICES.first()
+            }
+
+            SectionHeader(title = "Voice Secretary (ElevenLabs)")
+            SleekCard {
+                // Toggle Voice Enabled
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Voice Secretary Audio", color = TextLight, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            "Speaks daily agendas and vocal confirmations using ElevenLabs neural voice.",
+                            color = TextMuted,
+                            fontSize = 12.sp,
+                            lineHeight = 16.sp
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Switch(
+                        checked = voiceEnabled,
+                        onCheckedChange = { checked ->
+                            VoiceSecretaryManager.setVoiceEnabled(context, checked)
+                            voiceEnabled = checked
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = TextLight,
+                            checkedTrackColor = Primary,
+                            uncheckedTrackColor = CardElevated
+                        )
+                    )
+                }
+
+                if (voiceEnabled) {
+                    HorizontalDivider(color = CardBorderSubtle, thickness = 1.dp, modifier = Modifier.padding(vertical = 12.dp))
+
+                    Text("Active Voice Model", color = TextLight, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(6.dp))
+
+                    VoiceSecretaryManager.AVAILABLE_VOICES.forEach { voice ->
+                        val isSelected = voice.id == selectedVoiceId
+                        Surface(
+                            onClick = {
+                                VoiceSecretaryManager.setSelectedVoiceId(context, voice.id)
+                                selectedVoiceId = voice.id
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (isSelected) Primary.copy(alpha = 0.15f) else CardElevated,
+                            border = BorderStroke(1.dp, if (isSelected) Primary else CardBorderSubtle),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 3.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = voice.name,
+                                        color = if (isSelected) Primary else TextLight,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp
+                                    )
+                                    Text(
+                                        text = voice.description,
+                                        color = TextMuted,
+                                        fontSize = 11.sp
+                                    )
+                                }
+                                if (isSelected) {
+                                    Icon(Icons.Default.Check, contentDescription = null, tint = Primary, modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+
+                    // Test Voice Button
+                    Button(
+                        onClick = {
+                            VoiceSecretaryManager.speak(context, "Hello! Your Schedule Secretary is set up and ready to keep you on track.")
+                            Toast.makeText(context, "Speaking sample with ${currentVoice.name}...", Toast.LENGTH_SHORT).show()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.VolumeUp, contentDescription = null, tint = Color.Black, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Test Voice: ${currentVoice.name}", color = Color.Black, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }

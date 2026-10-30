@@ -1,4 +1,4 @@
-package com.scheduleassistant.app.data.db
+﻿package com.scheduleassistant.app.data.db
 
 import androidx.room.Dao
 import androidx.room.Insert
@@ -159,5 +159,38 @@ interface IngestionDecisionDao {
     suspend fun getDecisionCount(): Int
 }
 
+@Dao
+interface ChatPreferenceDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(pref: ChatPreferenceEntity)
 
+    @Query("SELECT * FROM chat_preferences ORDER BY chat_title ASC")
+    fun getAllFlow(): Flow<List<ChatPreferenceEntity>>
 
+    @Query("SELECT * FROM chat_preferences ORDER BY chat_title ASC")
+    suspend fun getAll(): List<ChatPreferenceEntity>
+
+    @Query("SELECT * FROM chat_preferences WHERE chat_title = :chatTitle LIMIT 1")
+    suspend fun getByTitle(chatTitle: String): ChatPreferenceEntity?
+
+    @Query("SELECT * FROM chat_preferences WHERE is_muted = 1")
+    suspend fun getMutedChats(): List<ChatPreferenceEntity>
+
+    @Query("DELETE FROM chat_preferences WHERE chat_title = :chatTitle")
+    suspend fun deleteByTitle(chatTitle: String)
+
+    @Query("DELETE FROM chat_preferences")
+    suspend fun clearAll()
+}
+
+@Dao
+interface SmartPackStateDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(state: SmartPackStateEntity)
+
+    @Query("SELECT * FROM smart_pack_state WHERE model_key = :modelKey LIMIT 1")
+    suspend fun getState(modelKey: String = "qwen2.5-0.5b-q4"): SmartPackStateEntity?
+
+    @Query("SELECT * FROM smart_pack_state WHERE model_key = :modelKey LIMIT 1")
+    fun getStateFlow(modelKey: String = "qwen2.5-0.5b-q4"): Flow<SmartPackStateEntity?>
+}

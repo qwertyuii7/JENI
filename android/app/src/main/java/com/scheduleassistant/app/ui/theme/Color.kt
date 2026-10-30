@@ -30,3 +30,8 @@ val TextLight = Color(0xFFFAFAFA)
 val TextMuted = Color(0xFFA1A1AA)
 val TextSubtle = Color(0xFF71717A)
 val TextDisabled = Color(0xFF52525B)
+
+// Component & Typography Aliases
+val TextPrimary = TextLight
+val TextSecondary = TextMuted
+val CardBase = CardBg

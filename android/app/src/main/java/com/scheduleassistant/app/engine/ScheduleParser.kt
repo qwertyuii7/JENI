@@ -415,9 +415,25 @@ class ScheduleParser(
                 hour = 23
                 minute = 59
             } else {
-                timeUnspecified = true
-                if (type != "cancel") {
-                    isAmbiguous = true
+                val relMinMatch = Regex("(?i)\\b(?:in|after)\\s+(\\d+)\\s*(?:min|mins|minute|minutes)\\b").find(lower)
+                    ?: Regex("(?i)\\b(\\d+)\\s*(?:min|mins|minute|minutes)\\s*(?:baad|later)\\b").find(lower)
+                val relHourMatch = Regex("(?i)\\b(?:in|after)\\s+(\\d+)\\s*(?:hour|hours|hr|hrs)\\b").find(lower)
+                    ?: Regex("(?i)\\b(\\d+)\\s*(?:hour|hours|hr|hrs)\\s*(?:baad|later)\\b").find(lower)
+
+                if (relMinMatch != null || relHourMatch != null) {
+                    val relMins = if (relMinMatch != null) relMinMatch.groupValues[1].toInt() else (relHourMatch?.groupValues?.get(1)?.toInt() ?: 0) * 60
+                    if (relMins > 0) {
+                        val totalMin = refHour * 60 + refMinute + relMins
+                        hour = (totalMin / 60) % 24
+                        minute = totalMin % 60
+                        dayOffset = totalMin / (24 * 60)
+                        hasDayMention = true
+                    }
+                } else {
+                    timeUnspecified = true
+                    if (type != "cancel") {
+                        isAmbiguous = true
+                    }
                 }
             }
         }
@@ -484,7 +500,7 @@ class ScheduleParser(
                 set(Calendar.YEAR, refYear)
                 set(Calendar.MONTH, refMonth - 1)
                 set(Calendar.DAY_OF_MONTH, refDay)
-                add(Calendar.DAY_OF_MONTH, dayOffset ?: 0)
+                add(Calendar.DAY_OF_MONTH, dayOffset)
             }
             targetYear = targetCal.get(Calendar.YEAR)
             targetMonth = targetCal.get(Calendar.MONTH) + 1

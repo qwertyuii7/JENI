@@ -42,7 +42,8 @@ class IngestionPipeline(
     private val dispatcher: NotificationDispatcher? = null,
     private val signalScorer: SignalScorer = DefaultSignalScorer(),
     private val laneClassifier: LaneClassifier = DefaultLaneClassifier(),
-    private val userProfile: UserProfile = UserProfile()
+    private val userProfile: UserProfile = UserProfile(),
+    private val aiReasoningEngine: AiScheduleReasoningEngine = AiScheduleReasoningEngine()
 ) {
     private var seqCounter: Long = 0
 
@@ -115,6 +116,28 @@ class IngestionPipeline(
                 eventStore.add(ignoreEvent)
                 return PipelineResult("IGNORED", message = "Blocked prompt injection")
             }
+            if (filterRes.reason == "system_media_noise") {
+                val ignoreId = "ignore-${UUID.randomUUID()}"
+                val ignoreEvent = SyncEvent(
+                    id = UUID.randomUUID().toString(),
+                    timestamp = nowIso,
+                    device_id = deviceId,
+                    seq = ++seqCounter,
+                    hlc = hlc.now(),
+                    type = "event_ignored",
+                    entity_id = ignoreId,
+                    payload = mapOf(
+                        "reasons" to listOf("system_media_noise", "no_schedule_intent"),
+                        "confidence" to 1.0,
+                        "raw_text" to rawText,
+                        "raw_message_id" to rawMessageId,
+                        "chat_title" to chatTitle,
+                        "sender" to sender
+                    )
+                )
+                eventStore.add(ignoreEvent)
+                return PipelineResult("IGNORED", message = "Ignored system or media download noise")
+            }
         }
 
         // 3. Triage Signal Scoring with Learned Priors
@@ -160,11 +183,54 @@ class IngestionPipeline(
             )
         }
 
-        // 5. Parse using ScheduleParser
+        // 5. Parse using ScheduleParser (Normal Layer)
         val extraction = parser.parse(rawText, referenceNow)
 
-        // 6. NEEDS_ATTENTION Lane: Action items, notices, attachments, or time-unspecified items
+        // 6. AI Semantic Reasoning Layer: validates actionability, refines title, eliminates false chatter
+        val aiReasoning = aiReasoningEngine.reason(
+            AiReasoningInput(
+                rawText = rawText,
+                sender = sender,
+                chatTitle = chatTitle,
+                referenceNow = referenceNow,
+                normalLayerExtraction = extraction,
+                candidateLane = classification.lane,
+                initialConfidence = classification.confidence
+            )
+        )
+
+        // If AI layer reasons that the message is non-actionable chatter, route to IGNORE without card generation
+        if (!aiReasoning.isActionable || aiReasoning.refinedLane == TriageLane.IGNORE) {
+            val ignoreId = "ignore-${UUID.randomUUID()}"
+            val ignoreEvent = SyncEvent(
+                id = UUID.randomUUID().toString(),
+                timestamp = nowIso,
+                device_id = deviceId,
+                seq = ++seqCounter,
+                hlc = hlc.now(),
+                type = "event_ignored",
+                entity_id = ignoreId,
+                payload = mapOf(
+                    "reasons" to aiReasoning.reasons,
+                    "confidence" to aiReasoning.aiConfidence,
+                    "raw_text" to rawText,
+                    "raw_message_id" to rawMessageId,
+                    "chat_title" to chatTitle,
+                    "sender" to sender,
+                    "ai_explanation" to aiReasoning.reasoningExplanation
+                )
+            )
+            eventStore.add(ignoreEvent)
+            return PipelineResult(
+                status = "IGNORED",
+                message = "Message deemed non-actionable by AI layer: ${aiReasoning.reasoningExplanation}",
+                extraction = null
+            )
+        }
+
+        // 7. NEEDS_ATTENTION Lane: Action items, notices, attachments, or time-unspecified items
         val isAttentionLane = classification.lane == TriageLane.NEEDS_ATTENTION ||
+                aiReasoning.refinedLane == TriageLane.NEEDS_ATTENTION ||
                 extraction == null ||
                 extraction.time_unspecified ||
                 extraction.ambiguous
@@ -179,20 +245,30 @@ class IngestionPipeline(
                 effectiveReasons.add("ambiguous_time")
             }
 
+            val refinedNoticeTitle = if (extraction != null &&
+                !extraction.title.equals("event", ignoreCase = true) &&
+                !extraction.title.equals("notice", ignoreCase = true) &&
+                !extraction.title.equals("meeting", ignoreCase = true) &&
+                !extraction.title.equals("call", ignoreCase = true)
+            ) {
+                extraction.title
+            } else {
+                aiReasoning.refinedTitle
+            }
+
             val effectiveExtraction = extraction ?: ExtractionOutput(
                 type = "notice",
-                title = extractNoticeTitle(rawText),
+                title = refinedNoticeTitle,
                 start = null,
                 start_date = extractNoticeDate(rawText),
                 end = null,
                 time_unspecified = true,
                 ambiguous = false,
                 source_quote = rawText.take(120),
-                confidence = classification.confidence
+                confidence = aiReasoning.aiConfidence
             )
-            if (extraction != null) {
-                effectiveExtraction.time_unspecified = true
-            }
+            effectiveExtraction.title = refinedNoticeTitle
+            effectiveExtraction.time_unspecified = true
 
             val entityId = "sched-${UUID.randomUUID()}"
             val extractEvent = SyncEvent(
@@ -217,7 +293,8 @@ class IngestionPipeline(
                     "lane" to "NEEDS_ATTENTION",
                     "reasons" to effectiveReasons,
                     "chat_title" to chatTitle,
-                    "sender" to sender
+                    "sender" to sender,
+                    "ai_explanation" to aiReasoning.reasoningExplanation
                 )
             )
             eventStore.add(extractEvent)
@@ -230,8 +307,14 @@ class IngestionPipeline(
             )
         }
 
-        // 7. SCHEDULE Lane with concrete resolved time
+        // 8. SCHEDULE Lane with concrete resolved time
         val concreteExtraction = extraction!!
+        if (concreteExtraction.title.equals("event", ignoreCase = true) ||
+            concreteExtraction.title.equals("meeting", ignoreCase = true) ||
+            concreteExtraction.title.equals("call", ignoreCase = true)
+        ) {
+            concreteExtraction.title = aiReasoning.refinedTitle
+        }
         val candidates = mutableListOf<ScheduleEntity>()
         if (concreteExtraction.type == "cancel" || concreteExtraction.type == "reschedule") {
             val targetTitle = (concreteExtraction.target?.title ?: concreteExtraction.title).lowercase().trim()

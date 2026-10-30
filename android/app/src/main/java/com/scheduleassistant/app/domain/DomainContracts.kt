@@ -36,8 +36,9 @@ data class SignalConfig(
         "meeting", "sync", "presentation", "seminar", "workshop", "webinar",
         "discussion", "session", "practical", "deadline", "submission", "interview",
         "orientation", "briefing", "town hall", "review", "standup", "demo",
+        "call", "appointment", "checkup", "visit", "huddle", "connect",
         "क्लास", "कक्षा", "लेक्चर", "लैब", "परीक्षा", "टेस्ट", "मीटिंग", "बैठक",
-        "कार्यशाला", "सेमिनार", "प्रैक्टिकल", "प्रस्तुति", "सत्र"
+        "कार्यशाला", "सेमिनार", "प्रैक्टिकल", "प्रस्तुति", "सत्र", "कॉल"
     ),
     val urgencyTokens: List<String> = listOf(
         "urgent", "urgently", "mandatory", "compulsory", "important", "immediate",

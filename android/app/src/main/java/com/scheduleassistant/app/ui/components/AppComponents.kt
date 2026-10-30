@@ -157,6 +157,7 @@ fun SleekCard(
     backgroundColor: Color = CardBg,
     borderColor: Color = CardBorder,
     cornerRadius: Int = 16,
+    contentPadding: PaddingValues = PaddingValues(16.dp),
     onClick: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
@@ -176,7 +177,7 @@ fun SleekCard(
                     )
                 } else Modifier
             )
-            .padding(16.dp),
+            .padding(contentPadding),
         content = content
     )
 }
@@ -197,25 +198,27 @@ fun MetricGlanceCard(
     SleekCard(
         modifier = modifier,
         onClick = onClick,
-        cornerRadius = 14
+        cornerRadius = 14,
+        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 12.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.Top
         ) {
-            Column {
+            Column(modifier = Modifier.weight(1f, fill = false)) {
                 Text(
                     text = title,
                     color = TextMuted,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1
                 )
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = value,
                     color = TextLight,
-                    fontSize = 24.sp,
+                    fontSize = 22.sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = (-0.5).sp
                 )
@@ -223,7 +226,7 @@ fun MetricGlanceCard(
 
             Box(
                 modifier = Modifier
-                    .size(32.dp)
+                    .size(28.dp)
                     .clip(RoundedCornerShape(8.dp))
                     .background(iconTint.copy(alpha = 0.12f)),
                 contentAlignment = Alignment.Center
@@ -232,16 +235,16 @@ fun MetricGlanceCard(
                     imageVector = icon,
                     contentDescription = null,
                     tint = iconTint,
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(16.dp)
                 )
             }
         }
 
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(4.dp))
         Text(
             text = subtitle,
             color = TextSubtle,
-            fontSize = 11.sp,
+            fontSize = 10.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
@@ -426,6 +429,49 @@ fun SleekDangerButton(
         containerColor = Danger,
         contentColor = TextLight
     )
+}
+
+/**
+ * Refined danger outlined button (subtle tinted background and border, rather than aggressive solid red).
+ * Follows Emil Kowalski's visual hierarchy principle: secondary dismiss/cancel actions should not
+ * compete with primary confirmations.
+ */
+@Composable
+fun SleekDangerOutlinedButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    icon: ImageVector? = Icons.Default.Close,
+    enabled: Boolean = true
+) {
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier.defaultMinSize(minHeight = 44.dp),
+        shape = RoundedCornerShape(10.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Danger.copy(alpha = 0.35f)),
+        colors = ButtonDefaults.outlinedButtonColors(
+            containerColor = DangerBg.copy(alpha = 0.35f),
+            contentColor = Danger,
+            disabledContainerColor = Color.Transparent,
+            disabledContentColor = TextDisabled
+        ),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+    ) {
+        if (icon != null) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier.size(15.dp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+        }
+        Text(
+            text = text,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+    }
 }
 
 /**

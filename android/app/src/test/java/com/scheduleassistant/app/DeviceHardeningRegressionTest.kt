@@ -951,6 +951,15 @@ class DeviceHardeningRegressionTest {
         assertFalse("Roll number lists should be rejected", roll.shouldParse)
         assertEquals("roll_number_list", roll.reason)
 
+        // System media download noise rejection
+        val downloadNoise = prefilter.prefilter("Downloading content")
+        assertFalse("Downloading content must be rejected by prefilter", downloadNoise.shouldParse)
+        assertEquals("system_media_noise", downloadNoise.reason)
+
+        val docNoise = prefilter.prefilter("Downloading document")
+        assertFalse("Downloading document must be rejected by prefilter", docNoise.shouldParse)
+        assertEquals("system_media_noise", docNoise.reason)
+
         // Maybe classification: ambiguous or unspecified time
         val unspecified = parser.parse("kal class hai", referenceNow = "2026-10-12T10:00:00+05:30")
         assertNotNull(unspecified)

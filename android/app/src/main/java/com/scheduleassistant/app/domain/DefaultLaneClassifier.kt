@@ -54,15 +54,15 @@ class DefaultLaneClassifier : LaneClassifier {
         }
 
         // 3. SCHEDULE lane: Concrete time + academic/work event or link or strong urgency
+        // STRICT: We require at least ONE of: eventNoun, link, urgency+action combo.
+        // Score alone (>= 1.5 without event context) is no longer sufficient.
         if (features.hasTimeTokens && !features.isNoise) {
-            val hasEventContext = features.hasEventNouns ||
+            val hasStrongEventContext = features.hasEventNouns ||
                     features.hasLinks ||
-                    features.hasUrgencyTokens ||
-                    features.hasActionTokens ||
-                    features.mentionsUser ||
-                    features.score >= 1.5
+                    (features.hasUrgencyTokens && features.hasActionTokens) || // both required together
+                    features.mentionsUser
 
-            if (hasEventContext) {
+            if (hasStrongEventContext) {
                 reasons.add("time_found")
                 if (features.isHindiNotice) reasons.add("hindi_notice")
                 if (features.hasEventNouns) reasons.add("event_found")
@@ -70,10 +70,30 @@ class DefaultLaneClassifier : LaneClassifier {
                 if (features.hasUrgencyTokens) reasons.add("urgency_detected")
                 if (features.hasActionTokens) reasons.add("action_required")
 
-                val confidence = if (features.hasEventNouns && features.hasTimeTokens) 0.95 else 0.88
+                // Stricter confidence tiers:
+                // - event noun + time → 0.95 (highest confidence)
+                // - link + time → 0.90
+                // - mention + time → 0.88
+                // - urgency+action + time (no noun/link) → 0.82 (lower; more ambiguous)
+                val confidence = when {
+                    features.hasEventNouns && features.hasTimeTokens -> 0.95
+                    features.hasLinks -> 0.90
+                    features.mentionsUser -> 0.88
+                    else -> 0.82
+                }
                 return LaneClassification(
                     lane = TriageLane.SCHEDULE,
                     confidence = confidence,
+                    reasons = reasons
+                )
+            }
+            // Time + score alone (no event/link/urgency+action/mention) → NEEDS_ATTENTION, not SCHEDULE
+            if (features.score >= 1.5) {
+                reasons.add("time_found")
+                reasons.add("weak_event_signal")
+                return LaneClassification(
+                    lane = TriageLane.NEEDS_ATTENTION,
+                    confidence = 0.72,
                     reasons = reasons
                 )
             }

@@ -172,3 +172,47 @@ data class IngestionDecisionEntity(
     val parserOutput: String? = null
 )
 
+/**
+ * Per-chat preference record — persists user priority/mute choices.
+ * Priority levels: HIGH, NORMAL, LOW, MUTED
+ * MUTED chats are silently dropped in Prefilter (never reach the pipeline).
+ */
+@Entity(
+    tableName = "chat_preferences",
+    indices = [Index(value = ["chat_title"], unique = true)]
+)
+data class ChatPreferenceEntity(
+    @PrimaryKey
+    val id: String = java.util.UUID.randomUUID().toString(),
+    @ColumnInfo(name = "chat_title")
+    val chatTitle: String,
+    /** HIGH | NORMAL | LOW | MUTED */
+    val priority: String = "NORMAL",
+    @ColumnInfo(name = "is_muted")
+    val isMuted: Boolean = false,
+    @ColumnInfo(name = "updated_at")
+    val updatedAt: String = ""
+)
+
+/**
+ * Records optional Smart Pack (on-device LLM) download state.
+ * Only one row exists (model_key = "qwen2.5-0.5b-q4").
+ */
+@Entity(tableName = "smart_pack_state")
+data class SmartPackStateEntity(
+    @PrimaryKey
+    @ColumnInfo(name = "model_key")
+    val modelKey: String = "qwen2.5-0.5b-q4",
+    /** NOT_DOWNLOADED | DOWNLOADING | DOWNLOADED | FAILED */
+    val status: String = "NOT_DOWNLOADED",
+    @ColumnInfo(name = "downloaded_bytes")
+    val downloadedBytes: Long = 0L,
+    @ColumnInfo(name = "total_bytes")
+    val totalBytes: Long = 242_000_000L, // ~231 MB Q4 GGUF
+    @ColumnInfo(name = "file_path")
+    val filePath: String? = null,
+    @ColumnInfo(name = "sha256_verified")
+    val sha256Verified: Boolean = false,
+    @ColumnInfo(name = "updated_at")
+    val updatedAt: String = ""
+)

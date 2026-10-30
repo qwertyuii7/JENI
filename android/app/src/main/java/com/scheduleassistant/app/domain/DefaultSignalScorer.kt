@@ -67,7 +67,7 @@ class DefaultSignalScorer(
     )
 
     private val injectionPattern = Pattern.compile(
-        "(?:ignore\\s+all\\s+previous\\s+instructions|system\\s+prompt|override\\s+instructions|jailbreak|disregard\\s+all\\s+prior)",
+        "(?:ignore\\s+all\\s+previous\\s+instructions|system\\s+prompt|override\\s+instructions|jailbreak|disregard\\s+all\\s+prior|ignore\\s+system|you\\s+are\\s+now\\s+dan)",
         Pattern.CASE_INSENSITIVE
     )
 

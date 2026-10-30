@@ -87,25 +87,75 @@ class WhatsAppNotificationHandler(
     }
 
     fun isSystemNotification(text: String?, title: String? = null): Boolean {
-        val combined = "${title ?: ""} ${text ?: ""}".lowercase()
+        if (text.isNullOrBlank() && title.isNullOrBlank()) return true
+        val cleanText = text?.trim() ?: ""
+        val cleanTitle = title?.trim() ?: ""
+        val combined = "$cleanTitle $cleanText".lowercase().trim()
+
+        if (Regex("(?i)^(downloading|uploading|sending|calling|ringing|connecting)(\\.\\.\\.)?$").matches(cleanText)) {
+            return true
+        }
+
         val systemPatterns = listOf(
             "checking for new messages",
             "searching for new messages",
+            "downloading content",
+            "downloading media",
+            "downloading document",
+            "downloading file",
+            "downloading video",
+            "downloading audio",
+            "downloading photo",
+            "download in progress",
+            "media download",
+            "download paused",
+            "uploading content",
+            "uploading media",
+            "uploading file",
+            "upload in progress",
+            "media upload",
+            "sending file",
+            "sending media",
             "backup in progress",
             "backing up messages",
             "chat backup",
+            "restoring chat",
+            "restoring messages",
             "whatsapp web is currently active",
-            "whatsapp web",
             "whatsapp desktop is currently active",
-            "whatsapp desktop",
-            "waiting for this message"
+            "waiting for this message",
+            "this message was deleted",
+            "you deleted this message",
+            "ongoing video call",
+            "ongoing voice call",
+            "ongoing call",
+            "call in progress",
+            "incoming video call",
+            "incoming voice call",
+            "incoming call",
+            "missed video call",
+            "missed voice call",
+            "missed group video call",
+            "missed group voice call",
+            "missed group call",
+            "missed call",
+            "waiting for wi-fi",
+            "waiting for network",
+            "deleting messages"
         )
-        return systemPatterns.any { combined.contains(it) }
+        if (systemPatterns.any { combined.contains(it) }) return true
+
+        val isWhatsAppTitle = cleanTitle.equals("WhatsApp", ignoreCase = true) || cleanTitle.equals("WhatsApp Business", ignoreCase = true)
+        if (isWhatsAppTitle && (cleanText.contains("download") || cleanText.contains("backup") || cleanText.contains("call") || cleanText.contains("ring"))) {
+            return true
+        }
+
+        return false
     }
 
     /**
      * Processes WhatsApp notifications, enforcing allowlist, filtering system summaries/status,
-     * deduping, and returning fine-grained ingestion decisions for each message/notification.
+     * ongoing media transfers/calls, deduping, and returning fine-grained ingestion decisions.
      */
     fun processNotification(
         context: Context,
@@ -123,7 +173,59 @@ class WhatsAppNotificationHandler(
         val isGroup = messagingStyle?.isGroupConversation == true
         val isAllowlisted = DiagnosticsManager.isChatAllowlisted(context, chatTitle)
 
-        // 1. Skip summary notifications (NotificationCompat.isGroupSummary and FLAG_GROUP_SUMMARY)
+        // 1. Skip ongoing notifications (e.g. file transfers, calls, audio playing, foreground sync)
+        val isOngoing = sbn.isOngoing ||
+                (notification.flags and Notification.FLAG_ONGOING_EVENT) != 0 ||
+                (notification.flags and Notification.FLAG_FOREGROUND_SERVICE) != 0
+        if (isOngoing && (messagingStyle == null || messagingStyle.messages.isEmpty())) {
+            DiagnosticsManager.incrementSystemNotificationCount(context)
+            return listOf(
+                WhatsAppExtractionDecision(
+                    chatTitle = chatTitle,
+                    isGroup = isGroup,
+                    isAllowlisted = isAllowlisted,
+                    disposition = "skipped: ongoing event"
+                )
+            )
+        }
+
+        // 2. Skip progress notifications (media downloading / uploading / backups)
+        val hasProgress = notification.extras.containsKey(Notification.EXTRA_PROGRESS) ||
+                notification.extras.getInt(Notification.EXTRA_PROGRESS_MAX, 0) > 0
+        if (hasProgress) {
+            DiagnosticsManager.incrementSystemNotificationCount(context)
+            return listOf(
+                WhatsAppExtractionDecision(
+                    chatTitle = chatTitle,
+                    isGroup = isGroup,
+                    isAllowlisted = isAllowlisted,
+                    disposition = "skipped: progress notification"
+                )
+            )
+        }
+
+        // 3. Skip non-message system categories (calls, progress, service, status, navigation)
+        val category = notification.category
+        if (category != null && category in setOf(
+                NotificationCompat.CATEGORY_PROGRESS,
+                NotificationCompat.CATEGORY_SERVICE,
+                NotificationCompat.CATEGORY_CALL,
+                NotificationCompat.CATEGORY_STATUS,
+                NotificationCompat.CATEGORY_NAVIGATION,
+                NotificationCompat.CATEGORY_SYSTEM
+            )) {
+            DiagnosticsManager.incrementSystemNotificationCount(context)
+            return listOf(
+                WhatsAppExtractionDecision(
+                    chatTitle = chatTitle,
+                    isGroup = isGroup,
+                    isAllowlisted = isAllowlisted,
+                    disposition = "skipped: system category ($category)"
+                )
+            )
+        }
+
+        // 4. Skip summary notifications (NotificationCompat.isGroupSummary and FLAG_GROUP_SUMMARY)
         val isFlagSummary = (notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0
         val isCompatSummary = NotificationCompat.isGroupSummary(notification)
         if (isFlagSummary || isCompatSummary) {
@@ -141,7 +243,7 @@ class WhatsAppNotificationHandler(
         val rawTextSample = notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
             ?: notification.extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
 
-        // 2. Filter WhatsApp's own internal system notifications
+        // 5. Filter WhatsApp's own internal system notifications (downloads, backups, calls, connectivity)
         if (isSystemNotification(rawTextSample, chatTitle)) {
             DiagnosticsManager.incrementSystemNotificationCount(context)
             return listOf(
@@ -154,7 +256,20 @@ class WhatsAppNotificationHandler(
             )
         }
 
-        // 3. Enforce chat allowlist
+        // 6. Generic WhatsApp title without messagingStyle is system status (e.g. app announcements or status)
+        if (messagingStyle == null && (chatTitle.equals("WhatsApp", ignoreCase = true) || chatTitle.equals("WhatsApp Business", ignoreCase = true))) {
+            DiagnosticsManager.incrementSystemNotificationCount(context)
+            return listOf(
+                WhatsAppExtractionDecision(
+                    chatTitle = chatTitle,
+                    isGroup = isGroup,
+                    isAllowlisted = isAllowlisted,
+                    disposition = "skipped: app status"
+                )
+            )
+        }
+
+        // 7. Enforce chat allowlist
         if (!isAllowlisted) {
             return listOf(
                 WhatsAppExtractionDecision(

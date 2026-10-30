@@ -105,7 +105,7 @@ object DiagnosticsManager {
     }
 
     fun isCaptureAllChats(context: Context): Boolean {
-        return getPrefs(context).getBoolean(KEY_CAPTURE_ALL_CHATS, false)
+        return getPrefs(context).getBoolean(KEY_CAPTURE_ALL_CHATS, true)
     }
 
     fun setCaptureAllChats(context: Context, captureAll: Boolean) {
@@ -130,7 +130,7 @@ object DiagnosticsManager {
 
     fun isChatAllowlisted(context: Context, chatTitle: String?): Boolean {
         if (isCaptureAllChats(context)) return true
-        if (chatTitle.isNullOrBlank()) return false
+        if (chatTitle.isNullOrBlank()) return true
         return getAllowedChats(context).contains(chatTitle.trim())
     }
 

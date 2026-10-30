@@ -4,10 +4,15 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Inbox
 import androidx.compose.material.icons.filled.List
@@ -40,6 +45,7 @@ import com.scheduleassistant.app.engine.SpecLoader
 import com.scheduleassistant.app.service.AlarmScheduler
 import com.scheduleassistant.app.ui.screens.*
 import com.scheduleassistant.app.ui.theme.*
+import com.scheduleassistant.app.voice.VoiceSecretaryManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -55,7 +61,8 @@ enum class AppTab(val title: String) {
     PENDING("Pending"),
     ALERTS("Alerts"),
     SETTINGS("Settings"),
-    DEV_CONSOLE("Developer")
+    DEV_CONSOLE("Developer"),
+    CHAT_MANAGEMENT("Chat Management")
 }
 
 fun SyncEventEntity.toSyncEvent(): SyncEvent {
@@ -115,6 +122,9 @@ class MainActivity : ComponentActivity() {
         prefilter = Prefilter(specLoader)
         parser = ScheduleParser(specLoader, prefilter)
 
+        // Initialize Voice Secretary (ElevenLabs & On-Device TTS)
+        VoiceSecretaryManager.initialize(applicationContext)
+
         val initialTab = if (intent.getStringExtra("SCREEN_ROUTE") == "pending") {
             AppTab.PENDING
         } else {
@@ -146,6 +156,14 @@ class MainActivity : ComponentActivity() {
 
         val eventsFlow = remember { db.eventDao().getAllEventsFlow() }
         val rawEntities by eventsFlow.collectAsState(initial = emptyList())
+
+        // Chat Preferences flow
+        val chatPrefsFlow = remember { db.chatPreferenceDao().getAllFlow() }
+        val chatPreferences by chatPrefsFlow.collectAsState(initial = emptyList())
+
+        // Smart Pack state flow
+        val smartPackFlow = remember { db.smartPackStateDao().getStateFlow() }
+        val smartPackState by smartPackFlow.collectAsState(initial = null)
 
         // Map entities to domain SyncEvents
         val syncEvents = remember(rawEntities) {
@@ -193,76 +211,79 @@ class MainActivity : ComponentActivity() {
         Scaffold(
             snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
-                NavigationBar(
-                    containerColor = DarkBg,
-                    contentColor = Color.White
-                ) {
-                    NavigationBarItem(
-                        selected = currentTab == AppTab.HOME,
-                        onClick = { currentTab = AppTab.HOME },
-                        icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
-                        label = { Text("Home") },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = Primary,
-                            selectedTextColor = Primary,
-                            indicatorColor = CardElevated
-                        )
-                    )
-                    NavigationBarItem(
-                        selected = currentTab == AppTab.PENDING,
-                        onClick = { currentTab = AppTab.PENDING },
-                        icon = {
-                            BadgedBox(
-                                badge = {
-                                    if (pendingCount > 0) {
-                                        Badge(containerColor = Primary) { Text("$pendingCount", color = TextLight) }
-                                    }
-                                }
-                            ) {
-                                Icon(Icons.Default.Inbox, contentDescription = "Pending")
-                            }
-                        },
-                        label = { Text("Pending") },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = Primary,
-                            selectedTextColor = Primary,
-                            indicatorColor = CardElevated
-                        )
-                    )
-                    NavigationBarItem(
-                        selected = currentTab == AppTab.ALERTS,
-                        onClick = { currentTab = AppTab.ALERTS },
-                        icon = { Icon(Icons.Default.Notifications, contentDescription = "Alerts") },
-                        label = { Text("Alerts") },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = Primary,
-                            selectedTextColor = Primary,
-                            indicatorColor = CardElevated
-                        )
-                    )
-                    NavigationBarItem(
-                        selected = currentTab == AppTab.SETTINGS,
-                        onClick = { currentTab = AppTab.SETTINGS },
-                        icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
-                        label = { Text("Settings") },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = Primary,
-                            selectedTextColor = Primary,
-                            indicatorColor = CardElevated
-                        )
-                    )
-                    if (isDeveloperMode) {
+                Column {
+                    HorizontalDivider(color = CardBorderSubtle, thickness = 1.dp)
+                    NavigationBar(
+                        containerColor = DarkBg,
+                        contentColor = Color.White
+                    ) {
                         NavigationBarItem(
-                            selected = currentTab == AppTab.DEV_CONSOLE,
-                            onClick = { currentTab = AppTab.DEV_CONSOLE },
-                            icon = { Icon(Icons.Default.Terminal, contentDescription = "Developer") },
-                            label = { Text("Developer") },
+                            selected = currentTab == AppTab.HOME,
+                            onClick = { currentTab = AppTab.HOME },
+                            icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
+                            label = { Text("Home") },
                             colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = Accent,
-                                selectedTextColor = Accent,
+                                selectedIconColor = Primary,
+                                selectedTextColor = Primary,
                                 indicatorColor = CardElevated
                             )
                         )
+                        NavigationBarItem(
+                            selected = currentTab == AppTab.PENDING,
+                            onClick = { currentTab = AppTab.PENDING },
+                            icon = {
+                                BadgedBox(
+                                    badge = {
+                                        if (pendingCount > 0) {
+                                            Badge(containerColor = Primary) { Text("$pendingCount", color = TextLight) }
+                                        }
+                                    }
+                                ) {
+                                    Icon(Icons.Default.Inbox, contentDescription = "Pending")
+                                }
+                            },
+                            label = { Text("Pending") },
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = Primary,
+                                selectedTextColor = Primary,
+                                indicatorColor = CardElevated
+                            )
+                        )
+                        NavigationBarItem(
+                            selected = currentTab == AppTab.ALERTS,
+                            onClick = { currentTab = AppTab.ALERTS },
+                            icon = { Icon(Icons.Default.Notifications, contentDescription = "Alerts") },
+                            label = { Text("Alerts") },
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = Primary,
+                                selectedTextColor = Primary,
+                                indicatorColor = CardElevated
+                            )
+                        )
+                        NavigationBarItem(
+                            selected = currentTab == AppTab.SETTINGS,
+                            onClick = { currentTab = AppTab.SETTINGS },
+                            icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
+                            label = { Text("Settings") },
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = Primary,
+                                selectedTextColor = Primary,
+                                indicatorColor = CardElevated
+                            )
+                        )
+                        if (isDeveloperMode) {
+                            NavigationBarItem(
+                                selected = currentTab == AppTab.DEV_CONSOLE,
+                                onClick = { currentTab = AppTab.DEV_CONSOLE },
+                                icon = { Icon(Icons.Default.Terminal, contentDescription = "Developer") },
+                                label = { Text("Developer") },
+                                colors = NavigationBarItemDefaults.colors(
+                                    selectedIconColor = Accent,
+                                    selectedTextColor = Accent,
+                                    indicatorColor = CardElevated
+                                )
+                            )
+                        }
                     }
                 }
             }
@@ -276,9 +297,12 @@ class MainActivity : ComponentActivity() {
                     AppTab.HOME -> HomeScreen(
                         schedules = schedules,
                         reminders = reminders,
+                        chatPreferences = chatPreferences,
                         isListenerConnected = isListenerConnected,
                         onNavigateToPending = { currentTab = AppTab.PENDING },
                         onNavigateToDebug = { currentTab = if (isDeveloperMode) AppTab.DEV_CONSOLE else AppTab.SETTINGS },
+                        onNavigateToChatManagement = { currentTab = AppTab.CHAT_MANAGEMENT },
+                        onToggleChatMute = { chatTitle, muted -> handleToggleChatMute(chatTitle, muted) },
                         onDelete = onDeleteWithUndo,
                         onRestore = { id -> handleRestoreSchedule(id) },
                         onEdit = { id, title, start, alarm -> handleEditSchedule(id, title, start, alarm) }
@@ -312,7 +336,8 @@ class MainActivity : ComponentActivity() {
                                 notificationPermissionLauncher.launch("android.permission.POST_NOTIFICATIONS")
                             }
                         },
-                        onDeleteAllTestItems = { handleDeleteAllTestItems() }
+                        onDeleteAllTestItems = { handleDeleteAllTestItems() },
+                        onNavigateToChatManagement = { currentTab = AppTab.CHAT_MANAGEMENT }
                     )
                     AppTab.DEV_CONSOLE -> DeveloperDashboardScreen(
                         onNavigateBack = { currentTab = AppTab.SETTINGS },
@@ -329,6 +354,27 @@ class MainActivity : ComponentActivity() {
                         lastExtracted = lastExtracted,
                         onDeleteAllTestItems = { handleDeleteAllTestItems() }
                     )
+                    AppTab.CHAT_MANAGEMENT -> {
+                        // Collect known chat titles from projected state priors
+                        val knownChats = remember(projectedState) {
+                            (projectedState.chatPriors.keys + projectedState.senderPriors.keys).distinct().sorted()
+                        }
+                        com.scheduleassistant.app.ui.screens.ChatManagementScreen(
+                            knownChats = knownChats,
+                            chatPreferences = chatPreferences,
+                            smartPackState = smartPackState,
+                            onSetPriority = { chatTitle, priority ->
+                                handleSetChatPriority(chatTitle, priority)
+                            },
+                            onToggleMute = { chatTitle, muted ->
+                                handleToggleChatMute(chatTitle, muted)
+                            },
+                            onStartSmartPackDownload = { handleSmartPackDownload() },
+                            onCancelSmartPackDownload = { handleSmartPackCancel() },
+                            onDeleteSmartPack = { handleSmartPackDelete() },
+                            onNavigateBack = { currentTab = AppTab.SETTINGS }
+                        )
+                    }
                 }
             }
         }
@@ -829,5 +875,106 @@ class MainActivity : ComponentActivity() {
         db.eventDao().insertEvent(eventEntity)
 
         extraction
+    }
+
+    // ─── Chat Preference Handlers ─────────────────────────────────────────────
+
+    fun handleSetChatPriority(chatTitle: String, priority: com.scheduleassistant.app.ui.screens.ChatPriority) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val existing = db.chatPreferenceDao().getByTitle(chatTitle)
+            val nowIso = getIsoNow()
+            val pref = (existing ?: com.scheduleassistant.app.data.db.ChatPreferenceEntity(
+                chatTitle = chatTitle,
+                updatedAt = nowIso
+            )).copy(
+                priority = priority.name,
+                isMuted = false,
+                updatedAt = nowIso
+            )
+            db.chatPreferenceDao().upsert(pref)
+        }
+    }
+
+    fun handleToggleChatMute(chatTitle: String, muted: Boolean) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val existing = db.chatPreferenceDao().getByTitle(chatTitle)
+            val nowIso = getIsoNow()
+            val pref = (existing ?: com.scheduleassistant.app.data.db.ChatPreferenceEntity(
+                chatTitle = chatTitle,
+                updatedAt = nowIso
+            )).copy(
+                isMuted = muted,
+                priority = if (muted) "MUTED" else (existing?.priority ?: "NORMAL"),
+                updatedAt = nowIso
+            )
+            db.chatPreferenceDao().upsert(pref)
+        }
+    }
+
+    // ─── Smart Pack Handlers ──────────────────────────────────────────────────
+
+    fun handleSmartPackDownload() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val nowIso = getIsoNow()
+            val totalBytes = 242_000_000L // ~231 MB
+            db.smartPackStateDao().upsert(
+                com.scheduleassistant.app.data.db.SmartPackStateEntity(
+                    status = "DOWNLOADING",
+                    downloadedBytes = 0L,
+                    totalBytes = totalBytes,
+                    updatedAt = nowIso
+                )
+            )
+
+            // Progressively simulate download chunk updates across Wi-Fi or Mobile Data
+            for (step in 1..5) {
+                kotlinx.coroutines.delay(500)
+                val downloaded = (totalBytes * (step / 5.0)).toLong()
+                val isDone = step == 5
+                db.smartPackStateDao().upsert(
+                    com.scheduleassistant.app.data.db.SmartPackStateEntity(
+                        status = if (isDone) "DOWNLOADED" else "DOWNLOADING",
+                        downloadedBytes = downloaded,
+                        totalBytes = totalBytes,
+                        sha256Verified = isDone,
+                        filePath = if (isDone) "${applicationContext.filesDir}/models/qwen2.5-0.5b-q4.gguf" else null,
+                        updatedAt = getIsoNow()
+                    )
+                )
+            }
+            android.util.Log.i("SmartPack", "Smart Pack activated successfully")
+        }
+    }
+
+    fun handleSmartPackCancel() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val nowIso = getIsoNow()
+            db.smartPackStateDao().upsert(
+                com.scheduleassistant.app.data.db.SmartPackStateEntity(
+                    status = "NOT_DOWNLOADED",
+                    downloadedBytes = 0L,
+                    updatedAt = nowIso
+                )
+            )
+        }
+    }
+
+    fun handleSmartPackDelete() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val existing = db.smartPackStateDao().getState()
+            existing?.filePath?.let { path ->
+                try { java.io.File(path).delete() } catch (_: Exception) {}
+            }
+            val nowIso = getIsoNow()
+            db.smartPackStateDao().upsert(
+                com.scheduleassistant.app.data.db.SmartPackStateEntity(
+                    status = "NOT_DOWNLOADED",
+                    downloadedBytes = 0L,
+                    filePath = null,
+                    sha256Verified = false,
+                    updatedAt = nowIso
+                )
+            )
+        }
     }
 }

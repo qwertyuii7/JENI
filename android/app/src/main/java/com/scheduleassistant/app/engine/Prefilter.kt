@@ -27,6 +27,7 @@ class Prefilter(private val specLoader: SpecLoader) {
     private val thirdPartyRegex = Regex("(?i)\\b([A-Z][a-z]+ has a|unka viva hai|prof \\w+ is taking lecture for batch)\\b")
     private val staleForwardRegex = Regex("(?i)\\b(fwd:\\s*202[0-4]|circular\\s*202[0-4]|purana\\s*202[0-4])\\b")
     private val casualChatterRegex = Regex("(?i)^(gm bro|good morning all|kya chal raha hai\\??|ok done|lol that was so funny|hahaha true|send me the notes please|where are you reaching\\??|chalo chai peete hain|happy birthday bhai!?|thank you so much|yes perfect|check this reel lol|bhai kal milte hain aram se|bye good night)$")
+    private val systemMediaNoiseRegex = Regex("(?i)\\b(downloading content|downloading media|downloading document|downloading file|downloading|uploading content|uploading media|uploading|sending media|sending file|backup in progress|backing up messages|chat backup|restoring chat|checking for new messages|searching for new messages|missed voice call|missed video call|missed call|incoming call|incoming voice call|ongoing call|ongoing video call|calling\\.\\.\\.)\\b")
 
     fun prefilter(rawText: String?): PrefilterResult {
         if (rawText.isNullOrBlank()) {
@@ -76,6 +77,7 @@ class Prefilter(private val specLoader: SpecLoader) {
         if (questionRegex.containsMatchIn(sanitized)) return PrefilterResult(false, sanitized, "question_inquiry")
         if (thirdPartyRegex.containsMatchIn(sanitized)) return PrefilterResult(false, sanitized, "third_party_schedule")
         if (staleForwardRegex.containsMatchIn(sanitized)) return PrefilterResult(false, sanitized, "stale_forward")
+        if (systemMediaNoiseRegex.containsMatchIn(sanitized)) return PrefilterResult(false, sanitized, "system_media_noise")
 
         // Schedule triggers check from SpecLoader
         var hasTrigger = false
@@ -93,6 +95,13 @@ class Prefilter(private val specLoader: SpecLoader) {
                     hasTrigger = true
                     break
                 }
+            }
+        }
+
+        if (!hasTrigger) {
+            val hasConcreteTime = Regex("(?i)\\b(\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)|\\d{1,2}\\s*baje|\\b(?:at|pe|around)\\s+\\d{1,2}(?::\\d{2})?|\\b\\d{1,2}:\\d{2}\\b)").containsMatchIn(sanitized)
+            if (hasConcreteTime) {
+                hasTrigger = true
             }
         }
 

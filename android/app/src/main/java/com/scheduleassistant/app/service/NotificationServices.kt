@@ -205,6 +205,33 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
 
                 if (dec.disposition == "processed" && dec.message != null) {
                     val msg = dec.message
+                    val chatTitle = msg.chatTitle?.trim()
+
+                    // Whenever our app intercepts a notification from a legitimate chat, record it so users see it in the app
+                    if (!chatTitle.isNullOrBlank() &&
+                        !chatTitle.equals("WhatsApp", ignoreCase = true) &&
+                        !chatTitle.equals("WhatsApp Business", ignoreCase = true)) {
+                        val existingPref = db.chatPreferenceDao().getByTitle(chatTitle)
+                        if (existingPref == null) {
+                            db.chatPreferenceDao().upsert(
+                                com.scheduleassistant.app.data.db.ChatPreferenceEntity(
+                                    chatTitle = chatTitle,
+                                    priority = "NORMAL",
+                                    isMuted = false,
+                                    updatedAt = nowIso
+                                )
+                            )
+                        }
+                    }
+
+                    // ── Chat Priority / Mute Gate ───────────────────────────────
+                    // Silently drop messages from MUTED chats.
+                    val chatPref = if (!chatTitle.isNullOrBlank()) db.chatPreferenceDao().getByTitle(chatTitle) else null
+                    if (chatPref?.isMuted == true) {
+                        finalDisposition = "skipped: muted_chat"
+                        // Still log to ingestion_decisions below so the user can see it was muted
+                    } else {
+
                     // Requirement 1: Reference time for parsing = message's own timestamp pinned to Asia/Kolkata
                     val msgRefIso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).apply {
                         timeZone = kolkataTz
@@ -254,8 +281,10 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
                     )
                     db.diagnosticLogDao().insertDiagnosticLog(diagLog)
 
-                    // Requirement 1 & 2: Skip messages resolving to past or if log-only mode
-                    if (!isLogOnly && !isPast) {
+                    // Skip messages rejected by prefilter, resolving to past, or in log-only mode
+                    if (!filterResult.shouldParse) {
+                        finalDisposition = "skipped: rejected by prefilter (${filterResult.reason})"
+                    } else if (!isLogOnly && !isPast) {
                         // Normal Mode: persist raw message and ingest through pipeline
                         val rawMsgId = "raw-${UUID.randomUUID()}"
                         db.rawMessageDao().insertRawMessage(
@@ -302,21 +331,11 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
                                 payload = payloadJson.toString()
                             )
                             db.eventDao().insertEvent(eventEntity)
-
-                            if (result.status == "PENDING") {
-                                showNotificationAlert(
-                                    title = "New Schedule: ${result.extraction?.title}",
-                                    message = "${result.extraction?.start ?: result.extraction?.start_date ?: "Pending"} - Tap to review"
-                                )
-                            } else {
-                                showNotificationAlert(
-                                    title = "Action Needed: ${result.extraction?.title}",
-                                    message = "Important item added to your Inbox"
-                                )
-                            }
+                            // Clean card generation into Room DB without noisy popup notification shade spam
                         }
                     }
-                }
+                    } // end else (not muted)
+                } // end if dec.disposition == processed
 
                 // Requirement 3: Record Ingestion Decision Log for EVERY notification from WhatsApp packages
                 val ingestionDecision = com.scheduleassistant.app.data.db.IngestionDecisionEntity(

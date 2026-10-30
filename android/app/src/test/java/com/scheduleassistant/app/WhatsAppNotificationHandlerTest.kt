@@ -56,4 +56,31 @@ class WhatsAppNotificationHandlerTest {
         assertEquals("Prof Verma", sender)
         assertEquals("meeting postponed to Monday", text)
     }
+
+    @Test
+    fun testDownloadingContentAndSystemNotificationsDetected() {
+        assertTrue("Downloading content must be recognized as system notification",
+            handler.isSystemNotification("Downloading content", "WhatsApp"))
+
+        assertTrue("Downloading media must be recognized as system notification",
+            handler.isSystemNotification("Downloading media", "WhatsApp"))
+
+        assertTrue("Downloading document must be recognized as system notification",
+            handler.isSystemNotification("Downloading document", "WhatsApp"))
+
+        assertTrue("Backup in progress must be recognized as system notification",
+            handler.isSystemNotification("Backup in progress", "WhatsApp"))
+
+        assertTrue("Ongoing call must be recognized as system notification",
+            handler.isSystemNotification("Ongoing video call", "WhatsApp"))
+
+        assertTrue("Missed call must be recognized as system notification",
+            handler.isSystemNotification("Missed voice call", "WhatsApp"))
+
+        assertTrue("WhatsApp Web active must be recognized as system notification",
+            handler.isSystemNotification("WhatsApp Web is currently active", "WhatsApp Web"))
+
+        assertFalse("Real schedule message should not be classified as system notification",
+            handler.isSystemNotification("kal 4 baje DBMS class hai", "CS Section B"))
+    }
 }
