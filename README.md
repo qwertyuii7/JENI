@@ -101,6 +101,8 @@ ai_agent/
 ├── laptop/                          # Desktop/CLI evaluation harness & soak test runner
 ├── relay/                           # Peer-to-peer sync relay protocol
 ├── SYSTEM_PROMPT.md                 # Official AI System Prompts, Personas & Guardrails for Judges
+├── CALENDAR_TAB_IMPLEMENTATION_PLAN.md # In-App Calendar Tab Architecture & Implementation Plan
+├── GOOGLE_CALENDAR_INTEGRATION_PLAN.md # Google Calendar Two-Way Sync Integration Plan
 └── SYSTEM_ARCHITECTURE_AND_SPECIFICATION.md # Complete Technical Specification
 ```
 
@@ -110,6 +112,14 @@ ai_agent/
 
 For academic/hackathon jury evaluation, the exact operational AI prompts, three-lane semantic triage rules, few-shot Hinglish/Hindi examples, adversarial injection defenses, and voice secretary intent specifications are documented in:
 👉 **[`SYSTEM_PROMPT.md`](./SYSTEM_PROMPT.md)**
+
+---
+
+## 📅 Calendar System Plans
+
+- 👉 **[In-App Calendar Tab Plan](file:///CALENDAR_TAB_IMPLEMENTATION_PLAN.md)**: Native month/week calendar grid with density dots (🔵 schedule, 🟡 notice, 🟢 alarm) and day agenda cards.
+- 👉 **[Google Calendar Integration Plan](file:///GOOGLE_CALENDAR_INTEGRATION_PLAN.md)**: Device calendar provider & OAuth2 two-way sync strategy.
+
 
 
 ---
