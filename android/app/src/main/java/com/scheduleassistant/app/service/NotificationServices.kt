@@ -331,7 +331,29 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
                                 payload = payloadJson.toString()
                             )
                             db.eventDao().insertEvent(eventEntity)
-                            // Clean card generation into Room DB without noisy popup notification shade spam
+
+                            // 🔔 Fire user-visible notification alert for the new schedule card
+                            val cardTitle = result.extraction?.title?.takeIf { it.isNotBlank() } ?: "New Schedule"
+                            val senderLabel = msg.sender?.takeIf { it.isNotBlank() } ?: msg.chatTitle ?: "WhatsApp"
+                            if (lane == "SCHEDULE") {
+                                val startLabel = result.extraction?.start
+                                    ?.let {
+                                        try {
+                                            val sdf = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", java.util.Locale.US)
+                                            val d = sdf.parse(it)
+                                            if (d != null) java.text.SimpleDateFormat("EEE, d MMM • h:mm a", java.util.Locale.US).format(d) else it
+                                        } catch (_: Exception) { it }
+                                    } ?: result.extraction?.start_date ?: "(date TBD)"
+                                showNotificationAlert(
+                                    "📅 Scheduled: $cardTitle",
+                                    "From $senderLabel — $startLabel · Tap to review"
+                                )
+                            } else {
+                                showNotificationAlert(
+                                    "⚠️ Needs Attention: $cardTitle",
+                                    "From $senderLabel — time not confirmed · Tap to review"
+                                )
+                            }
                         }
                     }
                     } // end else (not muted)

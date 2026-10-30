@@ -280,7 +280,7 @@ object DiagnosticsManager {
     }
 
     fun isLogOnlyMode(context: Context): Boolean {
-        return getPrefs(context).getBoolean(KEY_LOG_ONLY_MODE, true) // Default ON for soak testing
+        return getPrefs(context).getBoolean(KEY_LOG_ONLY_MODE, false) // Default OFF — cards are created and alerts fire normally
     }
 
     fun setLogOnlyMode(context: Context, enabled: Boolean) {
