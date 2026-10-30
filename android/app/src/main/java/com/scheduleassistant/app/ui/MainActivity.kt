@@ -138,6 +138,17 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        try {
+            val isGranted = androidx.core.app.NotificationManagerCompat.getEnabledListenerPackages(this).contains(packageName)
+            if (isGranted) {
+                com.scheduleassistant.app.service.ScheduleNotificationListenerService.requestRebindService(this)
+                com.scheduleassistant.app.service.ScheduleNotificationListenerService.triggerActiveNotificationScan()
+            }
+        } catch (_: Exception) {}
+    }
+
     @Composable
     private fun MainContent(initialTab: AppTab) {
         var currentTab by remember { mutableStateOf(initialTab) }

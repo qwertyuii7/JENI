@@ -99,6 +99,30 @@ class ScheduleForegroundService : Service() {
 
 class ScheduleNotificationListenerService : NotificationListenerService() {
 
+    companion object {
+        @Volatile
+        private var instance: ScheduleNotificationListenerService? = null
+
+        fun triggerActiveNotificationScan() {
+            instance?.scanActiveNotifications()
+        }
+
+        fun isConnected(): Boolean {
+            return instance != null
+        }
+
+        fun requestRebindService(context: Context) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                try {
+                    val comp = ComponentName(context, ScheduleNotificationListenerService::class.java)
+                    requestRebind(comp)
+                } catch (e: Exception) {
+                    Log.e("ScheduleListener", "Failed to requestRebind: ${e.message}", e)
+                }
+            }
+        }
+    }
+
     private val serviceScope = CoroutineScope(Dispatchers.IO)
     private lateinit var pipeline: IngestionPipeline
     private lateinit var prefilter: Prefilter
@@ -107,6 +131,7 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         val specLoader = SpecLoader(
             keywordsStreamProvider = { assets.open("spec/keywords.json") },
             synonymsStreamProvider = { assets.open("spec/synonyms.json") },
@@ -133,17 +158,29 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
         )
     }
 
+    override fun onDestroy() {
+        super.onDestroy()
+        if (instance == this) {
+            instance = null
+        }
+    }
+
     override fun onListenerConnected() {
         super.onListenerConnected()
+        instance = this
         DiagnosticsManager.setListenerConnected(true)
         Log.i("ScheduleListener", "Notification listener connected successfully")
         serviceScope.launch {
             DiagnosticsManager.recordHeartbeat(applicationContext, "LISTENER_CONNECTED", "Notification listener connected successfully")
         }
+        scanActiveNotifications()
     }
 
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
+        if (instance == this) {
+            instance = null
+        }
         DiagnosticsManager.setListenerConnected(false)
         Log.w("ScheduleListener", "Notification listener disconnected - attempting requestRebind")
         serviceScope.launch {
@@ -157,6 +194,20 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
             } catch (e: Exception) {
                 Log.e("ScheduleListener", "Failed to requestRebind: ${e.message}", e)
             }
+        }
+    }
+
+    fun scanActiveNotifications() {
+        try {
+            val active = activeNotifications ?: return
+            Log.i("ScheduleListener", "Scanning ${active.size} active notifications in shade")
+            for (sbn in active) {
+                if (whatsAppHandler.isWhatsAppPackage(sbn.packageName)) {
+                    onNotificationPosted(sbn)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("ScheduleListener", "Error scanning active notifications: ${e.message}", e)
         }
     }
 
@@ -208,14 +259,22 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
                     val chatTitle = msg.chatTitle?.trim()
 
                     // Whenever our app intercepts a notification from a legitimate chat, record it so users see it in the app
-                    if (!chatTitle.isNullOrBlank() &&
+                    val effectiveChatName = if (!chatTitle.isNullOrBlank() &&
                         !chatTitle.equals("WhatsApp", ignoreCase = true) &&
                         !chatTitle.equals("WhatsApp Business", ignoreCase = true)) {
-                        val existingPref = db.chatPreferenceDao().getByTitle(chatTitle)
+                        chatTitle
+                    } else if (!msg.sender.isNullOrBlank() &&
+                        !msg.sender.equals("WhatsApp", ignoreCase = true) &&
+                        !msg.sender.equals("WhatsApp Business", ignoreCase = true)) {
+                        msg.sender
+                    } else null
+
+                    if (!effectiveChatName.isNullOrBlank()) {
+                        val existingPref = db.chatPreferenceDao().getByTitle(effectiveChatName)
                         if (existingPref == null) {
                             db.chatPreferenceDao().upsert(
                                 com.scheduleassistant.app.data.db.ChatPreferenceEntity(
-                                    chatTitle = chatTitle,
+                                    chatTitle = effectiveChatName,
                                     priority = "NORMAL",
                                     isMuted = false,
                                     updatedAt = nowIso
@@ -226,7 +285,7 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
 
                     // ── Chat Priority / Mute Gate ───────────────────────────────
                     // Silently drop messages from MUTED chats.
-                    val chatPref = if (!chatTitle.isNullOrBlank()) db.chatPreferenceDao().getByTitle(chatTitle) else null
+                    val chatPref = if (!effectiveChatName.isNullOrBlank()) db.chatPreferenceDao().getByTitle(effectiveChatName) else null
                     if (chatPref?.isMuted == true) {
                         finalDisposition = "skipped: muted_chat"
                         // Still log to ingestion_decisions below so the user can see it was muted
@@ -241,12 +300,13 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
                     prefilterResult = if (filterResult.shouldParse) "passed" else (filterResult.reason ?: "rejected")
                     val extraction = if (filterResult.shouldParse) parser.parse(msg.cleanText, referenceNow = msgRefIso) else null
 
-                    // Requirement 1: Skip anything resolving to the past, logging the reason
+                    // Requirement 1: Skip anything resolving strictly to the past (>30 min ago), logging the reason
                     var isPast = false
-                    if (extraction != null) {
+                    if (extraction != null && extraction.type != "cancel" && extraction.type != "reschedule") {
                         val startMs = extraction.start?.let { parseIsoTimestamp(it) }
                             ?: extraction.start_date?.let { parseIsoTimestamp("${it}T23:59:59+05:30") }
-                        if (startMs != null && startMs <= System.currentTimeMillis()) {
+                        // 30 minute grace window for meetings happening right now or slightly late delivery
+                        if (startMs != null && startMs < (System.currentTimeMillis() - 30 * 60 * 1000L)) {
                             isPast = true
                             finalDisposition = "skipped: resolved to past"
                         }
@@ -281,10 +341,20 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
                     )
                     db.diagnosticLogDao().insertDiagnosticLog(diagLog)
 
-                    // Skip messages rejected by prefilter, resolving to past, or in log-only mode
-                    if (!filterResult.shouldParse) {
+                    // Hard-noise filter: only block blatant spam/promos/OTPs/media noise before pipeline
+                    val isHardNoise = filterResult.reason in setOf(
+                        "empty_input", "pure_injection", "system_media_noise",
+                        "otp_noise", "transaction_noise", "promo_noise", "price_noise",
+                        "phone_noise", "score_noise", "casual_chatter"
+                    )
+
+                    if (isHardNoise) {
                         finalDisposition = "skipped: rejected by prefilter (${filterResult.reason})"
-                    } else if (!isLogOnly && !isPast) {
+                    } else if (isPast) {
+                        finalDisposition = "skipped: resolved to past"
+                    } else if (isLogOnly) {
+                        finalDisposition = "skipped: log_only_mode"
+                    } else {
                         // Normal Mode: persist raw message and ingest through pipeline
                         val rawMsgId = "raw-${UUID.randomUUID()}"
                         db.rawMessageDao().insertRawMessage(
@@ -332,6 +402,8 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
                             )
                             db.eventDao().insertEvent(eventEntity)
 
+                            finalDisposition = "created: $lane"
+
                             // 🔔 Fire user-visible notification alert for the new schedule card
                             val cardTitle = result.extraction?.title?.takeIf { it.isNotBlank() } ?: "New Schedule"
                             val senderLabel = msg.sender?.takeIf { it.isNotBlank() } ?: msg.chatTitle ?: "WhatsApp"
@@ -354,6 +426,8 @@ class ScheduleNotificationListenerService : NotificationListenerService() {
                                     "From $senderLabel — time not confirmed · Tap to review"
                                 )
                             }
+                        } else {
+                            finalDisposition = "ignored: ${result.message}"
                         }
                     }
                     } // end else (not muted)

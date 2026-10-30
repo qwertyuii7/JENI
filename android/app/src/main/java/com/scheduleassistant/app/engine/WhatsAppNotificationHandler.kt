@@ -73,17 +73,35 @@ class WhatsAppNotificationHandler(
     /**
      * Splits group "Sender: text" or "[Sender]: text" into sender and schedule body.
      */
+    /**
+     * Splits group "Sender: text" or "[Sender]: text" into sender and schedule body.
+     * Prevents false splits on timestamps (e.g. "10:30"), digits, URLs, and schedule keywords.
+     */
     fun splitSenderPrefix(sender: String?, text: String): Pair<String?, String> {
         val trimmed = text.trim()
         val regex = Regex("^([^:\\n]{1,35}):\\s+(.+)$", RegexOption.DOT_MATCHES_ALL)
         val match = regex.find(trimmed)
-        return if (match != null) {
-            val extractedSender = match.groupValues[1].trim()
+        if (match != null) {
+            val candidate = match.groupValues[1].trim()
             val body = match.groupValues[2].trim()
-            Pair(extractedSender, body)
-        } else {
-            Pair(sender, trimmed)
+            val candidateLower = candidate.lowercase()
+
+            val isNumericOrTime = candidate.all { it.isDigit() || it == '.' || it == ':' || it == ' ' }
+            val isScheduleKeyword = candidateLower in setOf(
+                "tomorrow", "today", "yesterday", "kal", "aaj", "parso",
+                "meeting", "class", "lecture", "sync", "viva", "test", "quiz", "exam",
+                "notice", "note", "update", "alert", "subject", "urgent", "important",
+                "subah", "shaam", "dopahar", "raat", "morning", "evening", "afternoon", "night",
+                "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+                "somvar", "mangalvar", "budhvar", "guruvar", "shukravar", "shanivar", "ravivar",
+                "http", "https"
+            )
+
+            if (!isNumericOrTime && !isScheduleKeyword && candidate.length in 2..30) {
+                return Pair(candidate, body)
+            }
         }
+        return Pair(sender, trimmed)
     }
 
     fun isSystemNotification(text: String?, title: String? = null): Boolean {
@@ -225,10 +243,20 @@ class WhatsAppNotificationHandler(
             )
         }
 
-        // 4. Skip summary notifications (NotificationCompat.isGroupSummary and FLAG_GROUP_SUMMARY)
+        val textLines = notification.extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
+        val hasTextLines = textLines != null && textLines.any { !it.isNullOrBlank() }
+        val rawTextSample = notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
+            ?: notification.extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
+
+        val isPureSummaryCounter = rawTextSample.isNullOrBlank() ||
+            Regex("(?i)^(\\d+\\s+(?:new\\s+)?messages?(?:\\s+from\\s+\\d+\\s+chats?)?|\\d+\\s+unread\\s+messages?)$").matches(rawTextSample.trim())
+
+        // 4. Skip pure summary notifications ONLY if they contain no messages or lines
         val isFlagSummary = (notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0
         val isCompatSummary = NotificationCompat.isGroupSummary(notification)
-        if (isFlagSummary || isCompatSummary) {
+        val hasMessagingStyleMessages = messagingStyle?.messages?.any { !it.text.isNullOrBlank() } == true
+
+        if ((isFlagSummary || isCompatSummary) && !hasMessagingStyleMessages && !hasTextLines && isPureSummaryCounter) {
             DiagnosticsManager.incrementSystemNotificationCount(context)
             return listOf(
                 WhatsAppExtractionDecision(
@@ -240,11 +268,8 @@ class WhatsAppNotificationHandler(
             )
         }
 
-        val rawTextSample = notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
-            ?: notification.extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
-
         // 5. Filter WhatsApp's own internal system notifications (downloads, backups, calls, connectivity)
-        if (isSystemNotification(rawTextSample, chatTitle)) {
+        if (isSystemNotification(rawTextSample, chatTitle) && !hasMessagingStyleMessages && !hasTextLines) {
             DiagnosticsManager.incrementSystemNotificationCount(context)
             return listOf(
                 WhatsAppExtractionDecision(
@@ -256,8 +281,10 @@ class WhatsAppNotificationHandler(
             )
         }
 
-        // 6. Generic WhatsApp title without messagingStyle is system status (e.g. app announcements or status)
-        if (messagingStyle == null && (chatTitle.equals("WhatsApp", ignoreCase = true) || chatTitle.equals("WhatsApp Business", ignoreCase = true))) {
+        // 6. Generic WhatsApp title handling: Only skip if actual text is empty or system status
+        val isGenericWhatsAppTitle = chatTitle.equals("WhatsApp", ignoreCase = true) ||
+                chatTitle.equals("WhatsApp Business", ignoreCase = true)
+        if (isGenericWhatsAppTitle && isSystemNotification(rawTextSample, chatTitle) && !hasMessagingStyleMessages && !hasTextLines) {
             DiagnosticsManager.incrementSystemNotificationCount(context)
             return listOf(
                 WhatsAppExtractionDecision(
@@ -283,7 +310,7 @@ class WhatsAppNotificationHandler(
 
         val decisions = mutableListOf<WhatsAppExtractionDecision>()
 
-        // 4. Parse MessagingStyle if available
+        // ── 1. Priority 1: MessagingStyle ─────────────────────────────────────
         if (messagingStyle != null && messagingStyle.messages.isNotEmpty()) {
             for (msg in messagingStyle.messages) {
                 val text = msg.text?.toString() ?: continue
@@ -303,6 +330,8 @@ class WhatsAppNotificationHandler(
 
                 val msgSender = msg.person?.name?.toString()
                 val (finalSender, cleanText) = splitSenderPrefix(msgSender, text)
+                val effectiveSender = finalSender ?: msgSender ?: chatTitle
+                val effectiveChat = if (isGenericWhatsAppTitle && !effectiveSender.isNullOrBlank()) effectiveSender else chatTitle
                 val msgTimestamp = if (msg.timestamp > 0L) msg.timestamp else sbn.postTime
                 val nowMs = System.currentTimeMillis()
 
@@ -310,7 +339,7 @@ class WhatsAppNotificationHandler(
                 if (nowMs - msgTimestamp > 24 * 60 * 60 * 1000L) {
                     decisions.add(
                         WhatsAppExtractionDecision(
-                            chatTitle = chatTitle,
+                            chatTitle = effectiveChat,
                             isGroup = isGroup,
                             isAllowlisted = true,
                             disposition = "skipped: older than 24h"
@@ -320,10 +349,10 @@ class WhatsAppNotificationHandler(
                 }
 
                 // Requirement 2: Deduplicate by (chat, normalized text) ignoring post time
-                if (isDeduplicated(chatTitle, cleanText, msgTimestamp)) {
+                if (isDeduplicated(effectiveChat, cleanText, msgTimestamp)) {
                     decisions.add(
                         WhatsAppExtractionDecision(
-                            chatTitle = chatTitle,
+                            chatTitle = effectiveChat,
                             isGroup = isGroup,
                             isAllowlisted = true,
                             disposition = "skipped: duplicate"
@@ -333,12 +362,12 @@ class WhatsAppNotificationHandler(
                 }
 
                 DiagnosticsManager.incrementChatMessageCount(context)
-                val dedupeKey = "${chatTitle ?: "chat"}|${normalizeTextForDedupe(cleanText)}"
+                val dedupeKey = "${effectiveChat ?: "chat"}|${normalizeTextForDedupe(cleanText)}"
                 val extracted = WhatsAppExtractedMessage(
                     packageName = sbn.packageName,
                     notificationKey = sbn.key,
-                    chatTitle = chatTitle,
-                    sender = finalSender,
+                    chatTitle = effectiveChat,
+                    sender = effectiveSender,
                     rawText = text,
                     cleanText = cleanText,
                     isGroup = isGroup,
@@ -347,7 +376,7 @@ class WhatsAppNotificationHandler(
                 )
                 decisions.add(
                     WhatsAppExtractionDecision(
-                        chatTitle = chatTitle,
+                        chatTitle = effectiveChat,
                         isGroup = isGroup,
                         isAllowlisted = true,
                         disposition = "processed",
@@ -355,30 +384,96 @@ class WhatsAppNotificationHandler(
                     )
                 )
             }
-        } else {
-            // Fallback for standard notifications / BigTextStyle
-            val bigText = notification.extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
-            val text = notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: bigText ?: ""
+        }
 
-            if (text.isNotBlank() && !isSystemNotification(text, chatTitle)) {
-                val (finalSender, cleanText) = splitSenderPrefix(chatTitle, text)
+        // ── 2. Priority 2: EXTRA_TEXT_LINES (Multi-message inbox style) ────────
+        if (decisions.isEmpty() && hasTextLines) {
+            val lines = textLines ?: emptyArray()
+            for (lineCs in lines) {
+                val line = lineCs?.toString() ?: continue
+                if (line.isBlank() || isSystemNotification(line, chatTitle)) continue
+                if (isPureSummaryCounter && Regex("(?i)^\\d+\\s+new\\s+messages?$").matches(line.trim())) continue
+
+                val (finalSender, cleanText) = splitSenderPrefix(chatTitle, line)
+                val effectiveSender = if (finalSender != null && !finalSender.equals("WhatsApp", ignoreCase = true)) finalSender else chatTitle
+                val effectiveChat = if (isGenericWhatsAppTitle && !effectiveSender.isNullOrBlank()) effectiveSender else chatTitle
                 val msgTimestamp = sbn.postTime
                 val nowMs = System.currentTimeMillis()
 
-                // Requirement 1: Skip messages older than 24h
                 if (nowMs - msgTimestamp > 24 * 60 * 60 * 1000L) {
                     decisions.add(
                         WhatsAppExtractionDecision(
-                            chatTitle = chatTitle,
+                            chatTitle = effectiveChat,
                             isGroup = isGroup,
                             isAllowlisted = true,
                             disposition = "skipped: older than 24h"
                         )
                     )
-                } else if (isDeduplicated(chatTitle, cleanText, msgTimestamp)) {
+                    continue
+                }
+
+                if (isDeduplicated(effectiveChat, cleanText, msgTimestamp)) {
                     decisions.add(
                         WhatsAppExtractionDecision(
-                            chatTitle = chatTitle,
+                            chatTitle = effectiveChat,
+                            isGroup = isGroup,
+                            isAllowlisted = true,
+                            disposition = "skipped: duplicate"
+                        )
+                    )
+                    continue
+                }
+
+                DiagnosticsManager.incrementChatMessageCount(context)
+                val dedupeKey = "${effectiveChat ?: "chat"}|${normalizeTextForDedupe(cleanText)}"
+                val extracted = WhatsAppExtractedMessage(
+                    packageName = sbn.packageName,
+                    notificationKey = sbn.key,
+                    chatTitle = effectiveChat,
+                    sender = effectiveSender,
+                    rawText = line,
+                    cleanText = cleanText,
+                    isGroup = isGroup,
+                    postTime = msgTimestamp,
+                    dedupeKey = dedupeKey
+                )
+                decisions.add(
+                    WhatsAppExtractionDecision(
+                        chatTitle = effectiveChat,
+                        isGroup = isGroup,
+                        isAllowlisted = true,
+                        disposition = "processed",
+                        message = extracted
+                    )
+                )
+            }
+        }
+
+        // ── 3. Priority 3: Fallback standard EXTRA_TEXT / EXTRA_BIG_TEXT ───────
+        if (decisions.isEmpty()) {
+            val bigText = notification.extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
+            val text = notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: bigText ?: ""
+
+            if (text.isNotBlank() && !isSystemNotification(text, chatTitle) && !isPureSummaryCounter) {
+                val (finalSender, cleanText) = splitSenderPrefix(chatTitle, text)
+                val effectiveSender = if (finalSender != null && !finalSender.equals("WhatsApp", ignoreCase = true)) finalSender else chatTitle
+                val effectiveChat = if (isGenericWhatsAppTitle && !effectiveSender.isNullOrBlank()) effectiveSender else chatTitle
+                val msgTimestamp = sbn.postTime
+                val nowMs = System.currentTimeMillis()
+
+                if (nowMs - msgTimestamp > 24 * 60 * 60 * 1000L) {
+                    decisions.add(
+                        WhatsAppExtractionDecision(
+                            chatTitle = effectiveChat,
+                            isGroup = isGroup,
+                            isAllowlisted = true,
+                            disposition = "skipped: older than 24h"
+                        )
+                    )
+                } else if (isDeduplicated(effectiveChat, cleanText, msgTimestamp)) {
+                    decisions.add(
+                        WhatsAppExtractionDecision(
+                            chatTitle = effectiveChat,
                             isGroup = isGroup,
                             isAllowlisted = true,
                             disposition = "skipped: duplicate"
@@ -386,12 +481,12 @@ class WhatsAppNotificationHandler(
                     )
                 } else {
                     DiagnosticsManager.incrementChatMessageCount(context)
-                    val dedupeKey = "${chatTitle ?: "chat"}|${normalizeTextForDedupe(cleanText)}"
+                    val dedupeKey = "${effectiveChat ?: "chat"}|${normalizeTextForDedupe(cleanText)}"
                     val extracted = WhatsAppExtractedMessage(
                         packageName = sbn.packageName,
                         notificationKey = sbn.key,
-                        chatTitle = chatTitle,
-                        sender = finalSender,
+                        chatTitle = effectiveChat,
+                        sender = effectiveSender,
                         rawText = text,
                         cleanText = cleanText,
                         isGroup = isGroup,
@@ -400,7 +495,7 @@ class WhatsAppNotificationHandler(
                     )
                     decisions.add(
                         WhatsAppExtractionDecision(
-                            chatTitle = chatTitle,
+                            chatTitle = effectiveChat,
                             isGroup = isGroup,
                             isAllowlisted = true,
                             disposition = "processed",

@@ -593,6 +593,17 @@ fun HomeScreen(
                                     fontSize = 12.sp,
                                     lineHeight = 16.sp
                                 )
+                                Spacer(Modifier.height(8.dp))
+                                Button(
+                                    onClick = {
+                                        com.scheduleassistant.app.service.ScheduleNotificationListenerService.requestRebindService(context)
+                                        com.scheduleassistant.app.service.ScheduleNotificationListenerService.triggerActiveNotificationScan()
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("Scan WhatsApp Notifications Now", color = Color.Black, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
                     }

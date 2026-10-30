@@ -106,12 +106,27 @@ fun ChatManagementScreen(
 
             // Section header
             item {
-                Text(
-                    "WhatsApp Chats",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = TextSecondary,
-                    modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
-                )
+                val localCtx = androidx.compose.ui.platform.LocalContext.current
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 2.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "WhatsApp Chats (${allChats.size})",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = TextSecondary
+                    )
+                    TextButton(
+                        onClick = {
+                            com.scheduleassistant.app.service.ScheduleNotificationListenerService.requestRebindService(localCtx)
+                            com.scheduleassistant.app.service.ScheduleNotificationListenerService.triggerActiveNotificationScan()
+                        },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Text("🔄 Scan Active", style = MaterialTheme.typography.labelSmall, color = Accent)
+                    }
+                }
             }
 
             if (allChats.isEmpty()) {
@@ -492,6 +507,18 @@ private fun EmptyChatState() {
                 color = TextSecondary.copy(alpha = 0.7f),
                 textAlign = TextAlign.Center
             )
+            Spacer(Modifier.height(4.dp))
+            val localCtx = androidx.compose.ui.platform.LocalContext.current
+            Button(
+                onClick = {
+                    com.scheduleassistant.app.service.ScheduleNotificationListenerService.requestRebindService(localCtx)
+                    com.scheduleassistant.app.service.ScheduleNotificationListenerService.triggerActiveNotificationScan()
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+            ) {
+                Text("Scan Active Notifications Now", fontSize = 12.sp)
+            }
         }
     }
 }
