@@ -100,8 +100,17 @@ ai_agent/
 ├── spec/                            # Machine-readable schemas, dayparts, and phrase dictionaries
 ├── laptop/                          # Desktop/CLI evaluation harness & soak test runner
 ├── relay/                           # Peer-to-peer sync relay protocol
+├── SYSTEM_PROMPT.md                 # Official AI System Prompts, Personas & Guardrails for Judges
 └── SYSTEM_ARCHITECTURE_AND_SPECIFICATION.md # Complete Technical Specification
 ```
+
+---
+
+## 🤖 AI System Prompts & Judge Evaluation Kit
+
+For academic/hackathon jury evaluation, the exact operational AI prompts, three-lane semantic triage rules, few-shot Hinglish/Hindi examples, adversarial injection defenses, and voice secretary intent specifications are documented in:
+👉 **[`SYSTEM_PROMPT.md`](./SYSTEM_PROMPT.md)**
+
 
 ---
 
